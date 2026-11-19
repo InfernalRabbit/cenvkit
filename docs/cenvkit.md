@@ -95,7 +95,7 @@ go build -o .cenvkit.bin ./cmd/cenvkit   # .cenvkit.bin is gitignored
 |---|---|
 | `cenvkit compose <args>` | assemble the Layer-1 chain, `exec docker compose <args>` (the core) |
 | `cenvkit env-files` | print the resolved `COMPOSE_ENV_FILES` (**Layer 1 only**), one path per line |
-| `cenvkit env-debug [--trace --var V\|--effective [--service S]\|--value --var V\|--list\|--files\|--overview] [--json]` | daemon-free debugger / gap-detector |
+| `cenvkit env-debug [--show VIEW]… [--var K] [--service S] [--json] [--redact]` | daemon-free debugger / gap-detector; `--show` repeats and cascades |
 | `cenvkit gap-report [--json]` | CI/pre-build lint: exit **1** if any `${VAR}` is satisfied only by a service `env_file:`, **0** clean, **2** if no compose file is found (daemon-free) |
 | `cenvkit run [-e ENV] [--expand\|--no-expand] [--print] -- <cmd> [args]` | exec a process with the merged chain env (no docker); propagates the child's exit code |
 | `cenvkit env [-e ENV] [--expand\|--no-expand] [--format dotenv\|json\|shell]` | emit the merged chain env (chain-derived keys, sorted) for CI / scripts / `eval` |
@@ -113,32 +113,42 @@ named `[name]` section of `.cenvkit.envchain`; default = the header-less /
 treated as non-TTY (plain). **`--json` output is never colored.**
 
 `env-debug` is **daemon-free** — it loads the model in-process via compose-go, with
-NO `docker compose` shell-out:
+NO `docker compose` shell-out.
 
-- `--trace --var V` — if `V` is in the chain: its winning value, the file that set
-  it, the shadowed files, and where `${V}` took effect (service/field → resolved).
-  If `V` is **not** in the chain but is defined in a service `env_file:`: the
-  **gap** — `${V}` falls back at run time, the runtime def(s), the affected
-  fields, and a fix hint.
-- `--effective [--service S]` — each service's **final container env** with the
-  source of every value (`env_file:` vs inline `environment:`). Inline
-  `environment:` is interpolated against **Layer 1** (so an inline
-  `${env_file_only_var}` shows its fallback — the true container value); `env_file:`
-  entries use their declared format (`raw` preserves literals); standard dotenv
-  expansion can see earlier env-files of the same service. Inline overrides `env_file:`.
-- `--value --var V` — `V`'s interpolation value (one line; empty if env_file-only).
-- `--list` (default) — the Layer-1 chain files (secrets last). `--files` — **two
-  groups**: *interpolation* (= `COMPOSE_ENV_FILES`, Layer 1) and *runtime-only*
-  (each service's declared `env_file:` paths; their values do not feed YAML interpolation).
-- `--overview` — a per-file **layering** view: the interpolation chain walked file
-  by file with markers `+` new / `~` override (`old → new`) / `·` repeat (raw
-  literal values, `${...}` unexpanded), then per-service `env_file:` layers + an
-  `inline environment:` final layer (inline wins), with `⚠ gap:` lines for vars
-  referenced as `${VAR}` but defined only in a service `env_file:`. Restores the
-  sh kit's `env-debug-diff` overview, correct under v3.
-- `--json` — the structured provenance `Report` for any mode (tooling/CI);
-  `--overview --json` adds the `layers` array.
+**Views cascade.** `--show` is repeatable and the sections render in the order you
+give them (no `--show` => the Layer-1 list). Nothing is silently ignored: an
+impossible combination exits 2 with a message naming what is missing.
 
+| `--show …` | What it prints |
+|---|---|
+| `list` | Layer-1 chain files (the default) |
+| `files` | two groups: interpolation (Layer 1) and runtime-only (service `env_file:` paths) |
+| `overview` | per-file layering: `+` new / `~` override (`old -> new`) / `·` repeat, raw values, `⚠ gap:` lines |
+| `effective` | each service final container env with the source of every value |
+| `trace` | one variable story (requires `--var`) |
+
+`--value --var V` is not a view: it prints the bare interpolation value and cannot
+be combined with anything else.
+
+**Filters work everywhere the data exists.**
+
+| | `list` | `files` | `overview` | `effective` | `trace` | `json` |
+|---|---|---|---|---|---|---|
+| `--var KEY` | files that declare it | files that declare it | its lines only | its entry only | the variable | `vars` + entries |
+| `--service S` | - | that service | that service | that service | its effects | that block |
+
+Defaults: `--var V` alone implies `--show trace`; `--service S` alone implies
+`--show effective`; `--json` alone keeps the historical whole-report document,
+while `--json --show …` emits only the requested sections.
+
+Conflicts (exit 2, never a silent fallback): `--value` with any other view or with
+`--json`; `--trace` / `--show trace` without `--var`; `--service` with a view set
+that carries no per-service data. The deprecated single-view flags (`--list`,
+`--files`, `--overview`, `--effective`, `--trace`) stay as aliases and warn on the
+human path only, so machine output remains parseable.
+
+`--redact` masks every value as `<redacted>` while keeping keys, files and layers —
+use it when pasting output into tickets or chat.
 `--trace` effects are reported for **service fields only** (`services.<name>.<field>`);
 `${VAR}` in top-level `networks:`/`volumes:`/`x-*` is out of scope (the var still
 appears in chain attribution if it is a chain key). The `--effective` view never

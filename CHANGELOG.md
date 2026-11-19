@@ -6,6 +6,32 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-19
+
+### Changed (breaking)
+
+- **`env-debug` views cascade.** `--show` is repeatable and renders `list`,
+  `files`, `overview`, `effective`, `trace` in the order given, instead of the
+  first flag winning. No `--show` keeps the previous default (the Layer-1 list).
+  The single-view flags (`--list`, `--files`, `--overview`, `--effective`,
+  `--trace`) still work as aliases and warn on the human path only.
+- **Filters apply everywhere the data exists.** `--var KEY` narrows `list`,
+  `files`, `overview`, `effective`, `trace` and `--json`; `--service NAME`
+  narrows the per-service views and the JSON service blocks.
+- **Impossible combinations exit 2** with an explanation instead of silently
+  falling back: `--value` with another view or `--json`, `--trace`/`--show trace`
+  without `--var`, `--service` with a view set that has no per-service data.
+
+### Added
+
+- `--redact`: values become `<redacted>`, keys/files/layers stay visible.
+- `--json --show …` emits only the requested sections (files, services, vars,
+  layers); `--json` alone keeps the historical whole-report document.
+- `--trace --var KEY` explains an `env_file`-only key
+  (`runtime-only: <file> (env_file)`) instead of printing `not set`.
+- A stderr warning when the removed `COMPOSE_ENV` selector is set.
+- Parameter interaction matrices in `docs/cenvkit.md` and `docs/ru/cenvkit.md`.
+
 ## [0.7.0] — 2026-11-19
 
 ### Added
