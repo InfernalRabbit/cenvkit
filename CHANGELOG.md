@@ -6,6 +6,37 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-19
+
+### Added
+
+- **`--env-file`** on `env-debug`, `gap-report`, `env` and `run`: layer an extra
+  env file **after** the project chain, mirroring `docker compose --env-file`.
+  A variable supplied only by that flag no longer looks like a gap, and the file
+  participates in interpolation exactly where Compose would apply it. A missing
+  file is an error, not a silent skip (Compose errors too). `cenvkit compose`
+  is unchanged: it still forwards docker's own `--env-file` untouched.
+- Bilingual documentation: the English docs are canonical and Russian copies live
+  under [`docs/ru/`](docs/ru/) (`cenvkit.md`, `guide.md`, integrations, agent
+  notes), plus [`README.ru.md`](README.ru.md). Both variants carry a language
+  switcher.
+- Community files: `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, three
+  issue templates and a pull-request template.
+
+### Changed
+
+- compose-go **v2.11.0 → v2.17.0**, which requires Go ≥ 1.26.11 (`go.mod` and the
+  CI pin follow). The full suite and the Docker acceptance path pass on the new
+  version; `govulncheck` reports no reachable vulnerabilities (the logrus bump
+  clears GO-2025-4188).
+- `env --format dotenv` escapes carriage returns as `\r`; compose-go decodes that
+  back to CR, so emitted lines never carry raw control bytes.
+- `THIRD_PARTY_NOTICES.md` regenerated for the new dependency set (28 modules:
+  8 Apache-2.0, 5 BSD-3-Clause, 15 MIT).
+- CI's non-blocking `compose-latest` job now publishes a pinned-vs-latest drift
+  table into the run summary and raises an annotation when upstream has moved on,
+  instead of failing invisibly.
+
 ## [0.6.2] — 2026-11-19
 
 Integration release: the offline/CI material that was previously handed out as

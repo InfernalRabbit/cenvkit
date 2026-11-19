@@ -224,7 +224,7 @@ func assemble(cmd *cobra.Command, envOverlay ...string) ([]string, chain.Result,
 // see newValidateCmd). It feeds BOTH the chain selection (which `.${ENV}.env` is
 // picked) AND the flatten base, so the two stay consistent. expand toggles
 // ${VAR} expansion (--expand default; --no-expand literal).
-func resolvePopulator(cmd *cobra.Command, env string, expand bool) (envmap.Resolved, error) {
+func resolvePopulator(cmd *cobra.Command, env string, expand bool, extraFiles []string) (envmap.Resolved, error) {
 	dir, err := resolveProjectDir(cmd)
 	if err != nil {
 		return envmap.Resolved{}, err
@@ -244,7 +244,40 @@ func resolvePopulator(cmd *cobra.Command, env string, expand bool) (envmap.Resol
 	// resolved selector is appended last so an env reference in a chain value
 	// expands to the effective tier instead of an empty string.
 	osEnv = withComposeEnv(osEnv, cr.ComposeEnv)
-	return envmap.Resolve(envStringSliceToMap(osEnv), cr.Files, expand)
+	files, err := addExtraEnvFiles(dir, cr.Files, extraFiles)
+	if err != nil {
+		return envmap.Resolved{}, err
+	}
+	return envmap.Resolve(envStringSliceToMap(osEnv), files, expand)
+}
+
+// addExtraEnvFiles resolves each --env-file path and appends it AFTER the project
+// chain, so the file's values take part in interpolation exactly like
+// `docker compose --env-file` (they still lose to the shell env, which is overlaid
+// last). A missing file is an error, not a silent skip: docker compose errors too,
+// and silently ignoring the flag is the failure mode this feature exists to fix.
+func addExtraEnvFiles(projectDir string, files, extras []string) ([]string, error) {
+	for _, p := range extras {
+		if p == "" {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(projectDir, p)
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			return nil, fmt.Errorf("--env-file %s: %w", abs, err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("--env-file %s: is a directory", abs)
+		}
+		files = append(files, abs)
+	}
+	return files, nil
 }
 
 // envStringSliceToMap turns os.Environ()-style "K=V" entries into a map. Later
@@ -442,6 +475,7 @@ func newEnvDebugCmd() *cobra.Command {
 	var (
 		mList, mEffective, mFiles, mTrace, mValue, mOverview, jsonOut bool
 		varName, service                                              string
+		envFiles                                                      []string
 	)
 	c := &cobra.Command{
 		Use:   "env-debug",
@@ -462,8 +496,12 @@ func newEnvDebugCmd() *cobra.Command {
 			// still enumerates the active Layer-2 set INTERNALLY (its C-loop, the
 			// gap-detector evidence); we no longer call engine.Resolve here (drops the
 			// redundant load — D1).
-			pf := make([]engine.ProvFile, 0, len(cr.Files))
-			for _, f := range cr.Files {
+			chainFiles, err := addExtraEnvFiles(dir, cr.Files, envFiles)
+			if err != nil {
+				return err
+			}
+			pf := make([]engine.ProvFile, 0, len(chainFiles))
+			for _, f := range chainFiles {
 				pf = append(pf, engine.ProvFile{Path: f, Layer: "layer1"})
 			}
 			rep, err := engine.New().Provenance(cmd.Context(), engine.ProvInput{
@@ -505,6 +543,8 @@ func newEnvDebugCmd() *cobra.Command {
 	c.Flags().StringVar(&varName, "var", "", "variable for --trace/--value")
 	c.Flags().StringVar(&service, "service", "", "filter --effective to one service")
 	c.Flags().BoolVar(&jsonOut, "json", false, "machine-readable JSON")
+	c.Flags().StringArrayVar(&envFiles, "env-file", nil,
+		"extra env file layered after the chain (repeatable; mirrors docker compose --env-file)")
 	return c
 }
 
@@ -523,7 +563,10 @@ func pick(enabled bool, name string) string {
 // distinct exit-code contract via exitError: gaps found => 1, clean => 0, no
 // compose file discovered => 2 (a misconfiguration, NOT a clean pass; spec §6).
 func newGapReportCmd() *cobra.Command {
-	var jsonOut bool
+	var (
+		jsonOut  bool
+		envFiles []string
+	)
 	c := &cobra.Command{
 		Use:   "gap-report",
 		Short: "Report env_file:->${VAR} interpolation gaps (CI/pre-build lint; daemon-free)",
@@ -536,8 +579,12 @@ func newGapReportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pf := make([]engine.ProvFile, 0, len(cr.Files))
-			for _, f := range cr.Files {
+			chainFiles, err := addExtraEnvFiles(dir, cr.Files, envFiles)
+			if err != nil {
+				return err
+			}
+			pf := make([]engine.ProvFile, 0, len(chainFiles))
+			for _, f := range chainFiles {
 				pf = append(pf, engine.ProvFile{Path: f, Layer: "layer1"})
 			}
 			rep, err := engine.New().Provenance(cmd.Context(), engine.ProvInput{
@@ -565,6 +612,8 @@ func newGapReportCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "machine-readable JSON")
+	c.Flags().StringArrayVar(&envFiles, "env-file", nil,
+		"extra env file layered after the chain (repeatable; mirrors docker compose --env-file)")
 	return c
 }
 
@@ -578,6 +627,7 @@ func newEnvCmd() *cobra.Command {
 		expand   bool
 		noExpand bool
 		format   string
+		envFiles []string
 	)
 	c := &cobra.Command{
 		Use:   "env",
@@ -588,7 +638,7 @@ func newEnvCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := resolvePopulator(cmd, envSel, expand && !noExpand)
+			res, err := resolvePopulator(cmd, envSel, expand && !noExpand, envFiles)
 			if err != nil {
 				return err
 			}
@@ -600,6 +650,8 @@ func newEnvCmd() *cobra.Command {
 	c.Flags().BoolVar(&noExpand, "no-expand", false, "emit chain values literally, leaving ${VAR} unexpanded")
 	c.MarkFlagsMutuallyExclusive("expand", "no-expand")
 	c.Flags().StringVar(&format, "format", "dotenv", "output format: dotenv|json|shell")
+	c.Flags().StringArrayVar(&envFiles, "env-file", nil,
+		"extra env file layered after the chain (repeatable; mirrors docker compose --env-file)")
 	return c
 }
 
@@ -613,6 +665,7 @@ func newRunCmd() *cobra.Command {
 		expand   bool
 		noExpand bool
 		print    bool
+		envFiles []string
 	)
 	c := &cobra.Command{
 		Use:                   "run [-e ENV] [--expand|--no-expand] [--print] -- <cmd> [args...]",
@@ -629,7 +682,7 @@ func newRunCmd() *cobra.Command {
 			if len(args) == 0 {
 				return &exitError{code: 2, msg: "no command after `--`"}
 			}
-			res, err := resolvePopulator(cmd, envSel, expand && !noExpand)
+			res, err := resolvePopulator(cmd, envSel, expand && !noExpand, envFiles)
 			if err != nil {
 				return err
 			}
@@ -646,6 +699,8 @@ func newRunCmd() *cobra.Command {
 	c.Flags().BoolVar(&noExpand, "no-expand", false, "emit chain values literally, leaving ${VAR} unexpanded")
 	c.MarkFlagsMutuallyExclusive("expand", "no-expand")
 	c.Flags().BoolVar(&print, "print", false, "print the chain-derived env (dotenv) and exit; do not exec")
+	c.Flags().StringArrayVar(&envFiles, "env-file", nil,
+		"extra env file layered after the chain (repeatable; mirrors docker compose --env-file)")
 	return c
 }
 

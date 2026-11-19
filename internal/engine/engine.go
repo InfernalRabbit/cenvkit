@@ -1,4 +1,4 @@
-// Package engine wraps compose-go (v2.11.0). It is the ONLY package in cenvkit
+// Package engine wraps compose-go (v2.17.0). It is the ONLY package in cenvkit
 // that imports compose-go; everything else consumes the plain-Go Result/ProjectView.
 package engine
 
@@ -47,12 +47,12 @@ type composeEngine struct{}
 // ErrNoComposeFile distinguishes absent default configuration from load errors.
 var ErrNoComposeFile = errors.New("no compose file found")
 
-// New returns the compose-go-backed Engine, pinned to v2.11.0.
+// New returns the compose-go-backed Engine, pinned to v2.17.0.
 func New() Engine { return &composeEngine{} }
 
 func (e *composeEngine) Resolve(ctx context.Context, in Input) (Result, error) {
 	// COMPOSE_FILE selection + ${VAR} interpolation is the cenvkit-side seam:
-	// probe-verified (compose-go v2.11.0, see docs/agent-notes/compose-go.md)
+	// probe-verified (compose-go v2.17.0, see docs/agent-notes/compose-go.md)
 	// that cli.WithConfigFileEnv (a) only sees COMPOSE_FILE if WithEnv ran first,
 	// and (b) os.Stats the RAW string with NO ${VAR} interpolation and resolves
 	// relative entries against the PROCESS cwd, not WithWorkingDirectory. So when

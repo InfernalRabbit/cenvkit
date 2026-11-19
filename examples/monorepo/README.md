@@ -1,3 +1,5 @@
+**English** · [Русский](README.ru.md)
+
 # Monorepo blueprint — root orchestrates subprojects
 
 A complete, runnable example of the **root-`include:`-s-subprojects** topology:

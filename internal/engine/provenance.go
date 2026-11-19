@@ -36,7 +36,7 @@ type ProvInput struct {
 // ParseOrderedLiteral reads a dotenv-style file into ORDERED, LITERAL entries for
 // the --overview lens AND the populator's --no-expand path (internal/envmap folds
 // the ordered entries into a last-wins map). compose-go's dotenv parser cannot be
-// reused here: it returns an unordered map AND expands ${...} (verified v2.11.0,
+// reused here: it returns an unordered map AND expands ${...} (verified v2.17.0,
 // plan §0). This is a thin stdlib-only line reader (keeps the engine seam — no
 // extra compose-go surface). It mirrors dotenv's KEY tokenization (skip
 // blank/#-comment lines; strip a leading `export `; split on the first `=`; key

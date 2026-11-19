@@ -13,24 +13,23 @@ the versions in `go.mod` / `go.sum`:
 
 Re-run those two commands after any dependency change and update the table.
 
-## Modules (29)
+## Modules (28)
 
 | Module | Version | License | Declared in go.mod as |
 | --- | --- | --- | --- |
-| `github.com/compose-spec/compose-go/v2` | v2.11.0 | Apache-2.0 | direct |
+| `github.com/compose-spec/compose-go/v2` | v2.17.0 | Apache-2.0 | direct |
 | `github.com/distribution/reference` | v0.5.0 | Apache-2.0 | indirect |
 | `github.com/docker/cli` | v29.4.0+incompatible | Apache-2.0 | direct |
 | `github.com/docker/go-connections` | v0.4.0 | Apache-2.0 | indirect |
-| `github.com/docker/go-units` | v0.5.0 | Apache-2.0 | indirect |
 | `github.com/opencontainers/go-digest` | v1.0.0 | Apache-2.0 | indirect |
 | `github.com/santhosh-tekuri/jsonschema/v6` | v6.0.1 | Apache-2.0 | indirect |
 | `github.com/spf13/cobra` | v1.10.2 | Apache-2.0 | direct |
-| `go.yaml.in/yaml/v4` | v4.0.0-rc.4 | Apache-2.0 | indirect |
+| `go.yaml.in/yaml/v4` | v4.0.0 | Apache-2.0 | indirect |
 | `github.com/spf13/pflag` | v1.0.9 | BSD-3-Clause | indirect |
 | `github.com/xhit/go-str2duration/v2` | v2.1.0 | BSD-3-Clause | indirect |
-| `golang.org/x/sync` | v0.3.0 | BSD-3-Clause | indirect |
-| `golang.org/x/sys` | v0.30.0 | BSD-3-Clause | indirect |
-| `golang.org/x/text` | v0.14.0 | BSD-3-Clause | indirect |
+| `golang.org/x/sync` | v0.24.0 | BSD-3-Clause | indirect |
+| `golang.org/x/sys` | v0.44.0 | BSD-3-Clause | indirect |
+| `golang.org/x/text` | v0.41.0 | BSD-3-Clause | indirect |
 | `github.com/aymanbagabas/go-osc52/v2` | v2.0.1 | MIT | indirect |
 | `github.com/charmbracelet/colorprofile` | v0.2.3-0.20250311203215-f60798e515dc | MIT | indirect |
 | `github.com/charmbracelet/lipgloss` | v1.1.0 | MIT | direct |
@@ -44,27 +43,24 @@ Re-run those two commands after any dependency change and update the table.
 | `github.com/mattn/go-shellwords` | v1.0.12 | MIT | indirect |
 | `github.com/muesli/termenv` | v0.16.0 | MIT | direct |
 | `github.com/rivo/uniseg` | v0.4.7 | MIT | indirect |
-| `github.com/sirupsen/logrus` | v1.9.0 | MIT | indirect |
+| `github.com/sirupsen/logrus` | v1.10.1 | MIT | indirect |
 | `github.com/xo/terminfo` | v0.0.0-20220910002029-abceb7e1c41e | MIT | indirect |
 
 ## NOTICE files (Apache-2.0 §4(d))
 
-Apache License 2.0, section 4(d), requires that a redistribution of a derivative
-work reproduce the NOTICE file(s) of the work it is derived from. Of the nine
-Apache-2.0 modules above, three ship a NOTICE file; those are reproduced
-verbatim below. The other six distribute no NOTICE file, so the attribution in
-the table is the complete obligation for them.
+The modules below ship a NOTICE file in their distribution; the text is
+reproduced verbatim from the Go module cache of the pinned versions.
 
-### `github.com/compose-spec/compose-go/v2 v2.11.0`
+### github.com/compose-spec/compose-go/v2 v2.17.0
 
-~~~text
+```
 The Compose Specification
 Copyright 2020 The Compose Specification Authors
-~~~
+```
 
-### `github.com/docker/cli v29.4.0+incompatible`
+### github.com/docker/cli v29.4.0+incompatible
 
-~~~text
+```
 Docker
 Copyright 2012-2017 Docker, Inc.
 
@@ -84,11 +80,11 @@ violate applicable laws.
 For more information, see https://www.bis.doc.gov
 
 See also https://www.apache.org/dev/crypto.html and/or seek legal counsel.
-~~~
+```
 
-### `go.yaml.in/yaml/v4 v4.0.0-rc.4`
+### go.yaml.in/yaml/v4 v4.0.0
 
-~~~text
+```
 The following files were ported to Go from C files of libyaml, and thus are
 still covered by their original MIT license, with the additional copyright
 starting in 2011 when the project was ported over:
@@ -110,21 +106,4 @@ All the remaining project files are covered by the Apache license:
 Copyright 2011-2019 Canonical Ltd
 Copyright 2025 The go-yaml Project Contributors
 http://www.apache.org/licenses/LICENSE-2.0
-~~~
-
-## Notes
-
-- **Go standard library.** Compiled into every binary by the Go toolchain;
-  BSD-3-Clause, Copyright 2009 The Go Authors (https://go.dev/LICENSE). It ships
-  no NOTICE file.
-- **MIT / BSD-3-Clause modules.** Their licenses require the copyright notice and
-  permission text to travel with the code. Both are unchanged in, and available
-  from, each module's own source distribution at the version pinned above. Only
-  the attribution is repeated here rather than 29 full license texts; the
-  Apache-2.0 modules are the ones that additionally oblige a NOTICE, and those
-  texts are the ones reproduced verbatim above.
-- **`golang.org/x/{sync,sys,text}`** also ship a `PATENTS` file (an additional
-  patent grant). It is not a NOTICE file and is not reproduced here.
-- **`github.com/docker/cli`'s NOTICE** mentions `github.com/creack/pty` (MIT). Only
-  `docker/cli/pkg/kvfile` is linked into cenvkit, so that code is not part of the
-  binaries; the NOTICE is still reproduced verbatim as §4(d) requires.
+```

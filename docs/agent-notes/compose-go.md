@@ -1,141 +1,150 @@
-# compose-go v2.11.0 — рабочие факты
+**English** · [Русский](../ru/agent-notes/compose-go.md)
 
-Проверено на пине `github.com/compose-spec/compose-go/v2 v2.11.0` (`go.mod`) и
-живых пробах. Относится к `internal/engine/**`.
+# compose-go — working facts
 
-## Границы и пин
+Verified against the pin `github.com/compose-spec/compose-go/v2 v2.11.0` (`go.mod`)
+and live probes. Applies to `internal/engine/**`.
 
-- compose-go импортирует ТОЛЬКО `internal/engine`, включая подпакеты `cli`,
-  `loader`, `dotenv`, `template`, `types`. Гейты: `make seam` и шаг CI
-  `compose-go seam check` (`go list -f ...`, без `-deps`).
-- Остальные пакеты видят plain-Go `Result`/`ProjectView` (`engine/engine.go`),
-  поэтому `cmd` и `internal/provenance` от compose-go не зависят.
-- Версия осознанно пинована (`cenvkit version` печатает её из build info,
-  `composeGoVersion`): бампишь — прогоняй acceptance. upstream-first: сами
-  считаем только выбор `COMPOSE_FILE` (нужен до загрузки) и `Flatten`.
+## Boundaries and the pin
 
-## Загрузка проекта
+- Only `internal/engine` imports compose-go, including its `cli`, `loader`,
+  `dotenv`, `template`, and `types` subpackages. Gates: `make seam` and the CI
+  step `compose-go seam check` (`go list -f ...`, without `-deps`).
+- The other packages see the plain-Go `Result`/`ProjectView`
+  (`engine/engine.go`), so `cmd` and `internal/provenance` do not depend on
+  compose-go.
+- The version is deliberately pinned (`cenvkit version` prints it from build info,
+  `composeGoVersion`): bump it — rerun acceptance. upstream-first: the only
+  things we compute ourselves are the `COMPOSE_FILE` selection (needed before
+  loading) and `Flatten`.
+
+## Loading a project
 
 ```go
 opts, err := cli.NewProjectOptions(configs,
     cli.WithWorkingDirectory(dir),
-    cli.WithEnv(env),                  // seed интерполяции
+    cli.WithEnv(env),                  // interpolation seed
     cli.WithDefaultProfiles(profiles...),
-    cli.WithResolvedPaths(true),       // EnvFile.Path абсолютный
+    cli.WithResolvedPaths(true),       // EnvFile.Path is absolute
     cli.WithInterpolation(true),
-    cli.WithoutEnvironmentResolution,  // «голый» ProjectOptionsFn, без скобок
+    cli.WithoutEnvironmentResolution,  // "bare" ProjectOptionsFn, no parentheses
 )
 proj, err := opts.LoadProject(ctx)
 ```
 
-- `cli.ProjectFromOptions` — deprecated; используй
+- `cli.ProjectFromOptions` is deprecated; use
   `NewProjectOptions(...).LoadProject`.
-- `Project.Services` — только АКТИВНЫЙ набор; профильно-выключенные уходят в
-  `DisabledServices`. Это map → для детерминизма сортируй имена.
+- `Project.Services` is only the ACTIVE set; profile-disabled services go to
+  `DisabledServices`. It is a map → sort names for determinism.
 - `ServiceConfig.EnvFiles []EnvFile{Path, Required OptOut, Format}`; `OptOut`
-  по умолчанию TRUE — отсутствующий обязательный `env_file:` = ошибка загрузки.
-- `ServiceConfig.Environment` — `map[string]*string` (`nil` = «unset»).
-- Порядок опций значим: `ProjectOptionsFn` применяются как переданы.
+  defaults to TRUE — a missing required `env_file:` is a load error.
+- `ServiceConfig.Environment` is `map[string]*string` (`nil` = "unset").
+- Option order matters: `ProjectOptionsFn` are applied as passed.
 
-## Почему COMPOSE_FILE считается вручную
+## Why COMPOSE_FILE is resolved by hand
 
-`cli.WithConfigFileEnv` не годится как единственный путь: (1) читает
-`o.Environment["COMPOSE_FILE"]`, а тот пуст без `cli.WithEnv` ДО него;
-(2) НЕ интерполирует `${VAR}` в значении; (3) относительные пути раскручивает
-от cwd процесса, а не от `WithWorkingDirectory`.
+`cli.WithConfigFileEnv` is not usable as the only path: (1) it reads
+`o.Environment["COMPOSE_FILE"]`, which is empty without `cli.WithEnv` BEFORE it;
+(2) it does NOT interpolate `${VAR}` in the value; (3) it resolves relative
+paths from the process cwd, not from `WithWorkingDirectory`.
 
-Поэтому `internal/engine/discover.go`:
+That is why `internal/engine/discover.go`:
 
-- нет `COMPOSE_FILE` → стандартное обнаружение
+- no `COMPOSE_FILE` → standard discovery
   `cli.NewProjectOptions(nil, WithWorkingDirectory(dir), WithDefaultConfigPath)`,
-  берём `opts.ConfigPaths` (стандартные имена + поиск вверх);
-- есть → режем сами по `COMPOSE_PATH_SEPARATOR`, иначе по
-  `os.PathListSeparator` (никогда `,`), подставляем `${ENV}`→`${CENVKIT_ENV}`,
-  интерполируем `template.SubstituteWithOptions(...)`, склеиваем с `dir` и
-  отдаём как `configs`. Отсутствующие явные файлы не фильтруем — ошибку должен
-  дать загрузчик.
+  take `opts.ConfigPaths` (standard names + upward search);
+- present → we split it ourselves on `COMPOSE_PATH_SEPARATOR`, otherwise on
+  `os.PathListSeparator` (never `,`), substitute `${ENV}`→`${CENVKIT_ENV}`,
+  interpolate with `template.SubstituteWithOptions(...)`, join with `dir` and
+  pass the result as `configs`. Missing explicit files are not filtered — the
+  loader must report the error.
 
-`HasComposeFileEnv` — только проба наличия; и гейт, и загрузчик зовут ОДИН
-`resolveComposeFiles`, чтобы не разъезжаться.
+`HasComposeFileEnv` is only a presence probe; both the gate and the loader call
+the SAME `resolveComposeFiles` so they cannot drift apart.
 
-## dotenv: три разных чтения
+## dotenv: three different reads
 
-| API | Где | Семантика |
+| API | Where | Semantics |
 |---|---|---|
-| `dotenv.GetEnvFromFile(base, files)` | `flatten.go`, `Flatten` | только значения файлов; `base` — источник подстановки, в результат НЕ копируется; полная база видна каждому файлу; отсутствующий файл = ОШИБКА, не skip |
-| `dotenv.ParseWithFormat(...)` | `envfile.go`, `parseEnvFile` | пофайловая атрибуция: lookup = external → этот файл → предыдущие; `""` = dotenv, `"raw"` = Docker CLI `kvfile` |
-| `dotenv.ReadFile(path, lookupFn)` | `provenance.go` | отдаёт map; при `nil` lookup пишет в stderr предупреждения о неразрешённых `${VAR}` — передавай замыкание |
+| `dotenv.GetEnvFromFile(base, files)` | `flatten.go`, `Flatten` | file values only; `base` is the substitution source and is NOT copied into the result; every file sees the full base; a missing file is an ERROR, not a skip |
+| `dotenv.ParseWithFormat(...)` | `envfile.go`, `parseEnvFile` | per-file attribution: lookup = external → this file → previous ones; `""` = dotenv, `"raw"` = Docker CLI `kvfile` |
+| `dotenv.ReadFile(path, lookupFn)` | `provenance.go` | returns a map; with a `nil` lookup it writes warnings about unresolved `${VAR}` to stderr — pass a closure |
 
-- Парсер compose-go отдаёт НЕупорядоченную map и раскрывает `${...}`; для
-  `--overview` и `--no-expand` есть свой `engine.ParseOrderedLiteral`.
-- `GetEnvFromFile` безусловно логирует `level=warning ... variable is not set`
-  (logrus, отключить нельзя): значение верное, но stderr `run`/`env` шумит.
+- The compose-go parser returns an UNORDERED map and expands `${...}`; for
+  `--overview` and `--no-expand` there is our own `engine.ParseOrderedLiteral`.
+- `GetEnvFromFile` unconditionally logs `level=warning ... variable is not set`
+  (logrus, cannot be disabled): the value is right, but `run`/`env` stderr is
+  noisy.
 
-## Шаблоны и интерполяция
+## Templates and interpolation
 
-- `template.Mapping = func(string) (string, bool)`; `bool` = «переменная есть».
-  `${V:-d}` при `!ok` даёт `d`, `${V}` без default — пустую строку.
-- `template.SubstituteWithOptions(s, mapping, template.WithoutLogging)` — без
-  `WithoutLogging` неразрешённые переменные печатаются в stderr.
-- `template.ExtractVariables(dict, template.DefaultPattern)` (если понадобится)
-  даёт только ИМЕНА без путей — пути по словарю обходи сам. Текущие `Effects`
-  строятся через `SubstituteWithOptions` с записывающим замыканием.
-- Подстановка считает «исполненные» обращения: переменные из невыбранных ветвей
-  `${A:+...}` не учитываются. `Provenance` строит `Effects` именно так.
+- `template.Mapping = func(string) (string, bool)`; `bool` = "the variable
+  exists". `${V:-d}` yields `d` when `!ok`, `${V}` without a default yields an
+  empty string.
+- `template.SubstituteWithOptions(s, mapping, template.WithoutLogging)` — without
+  `WithoutLogging`, unresolved variables are printed to stderr.
+- `template.ExtractVariables(dict, template.DefaultPattern)` (if needed) gives
+  NAMES only, without paths — walk paths over the dict yourself. The current
+  `Effects` are built through `SubstituteWithOptions` with a recording closure.
+- Substitution counts the "executed" references: variables from unselected
+  branches of `${A:+...}` are not counted. `Provenance` builds `Effects`
+  exactly that way.
 
-## B-lite provenance: raw-load + обход
+## B-lite provenance: raw-load + walk
 
-- **RAW-загрузка:** `loader.LoadConfigFiles(ctx, configs, projectDir)` → задать
-  `details.Environment` → `LoadModelWithContext` с `SkipInterpolation`,
+- **RAW load:** `loader.LoadConfigFiles(ctx, configs, projectDir)` → set
+  `details.Environment` → `LoadModelWithContext` with `SkipInterpolation`,
   `SkipValidation`, `SkipConsistencyCheck`, `SkipResolveEnvironment`.
-  `LoadConfigFiles` env не принимает.
-- **Ловушка нормализации:** интерполирующая загрузка разворачивает короткие
-  формы (`ports` → `{published,target}`, `environment` map → список
-  `"KEY=VALUE"`) — читать тот же путь из интерполированного словаря нельзя.
-  `walkDict` обходит сырой словарь (dotted + `[i]`), лист резолвится на месте.
-- **Форма пути зависит от мержа:** один файл → `environment.API_PORT` (`0`);
-  сервис, чей `environment:` переоткрыт overlay-файлом → `environment[1]` со
-  значением `"WEB_PORT=0"`. Новый ключ, сортирующийся раньше, СДВИГАЕТ индекс
-  (acceptance это пинит) — смотри фактический `--json`.
-- **Область:** `splitServiceField` берёт только `services.<name>.<field>`;
-  `${VAR}` в `networks`/`volumes`/`configs`/`secrets`/`x-*` намеренно не
-  попадает в `Effects` (сужение B-lite, не баг).
-- **C:** объявленные `svc.EnvFiles` читаются по порядку (missing пропускается),
-  затем inline `svc.Environment` (`nil` — удалить). Список объявленных файлов
-  хранится ОТДЕЛЬНО от per-key `Entries`: inline-оверрайд может съесть все
-  ключи файла, но файл обязан остаться в `ServiceEnv.EnvFiles` (иначе врёт
-  `--files`).
-- **Gap:** `referenced && !InChain && len(RuntimeDefs) > 0`; эффекты и
-  runtime-defs сортируются для детерминированного JSON.
+  `LoadConfigFiles` does not accept env.
+- **Normalization trap:** interpolating loading expands the short forms
+  (`ports` → `{published,target}`, `environment` map → a list of
+  `"KEY=VALUE"`) — you cannot read the same path from the interpolated dict.
+  `walkDict` walks the raw dict (dotted + `[i]`), resolving the leaf in place.
+- **The path shape depends on merging:** a single file → `environment.API_PORT`
+  (`0`); a service whose `environment:` is reopened by an overlay file →
+  `environment[1]` with the value `"WEB_PORT=0"`. A new key that sorts earlier
+  SHIFTS the index (acceptance pins this) — check the actual `--json`.
+- **Scope:** `splitServiceField` takes only `services.<name>.<field>`; a
+  `${VAR}` in `networks`/`volumes`/`configs`/`secrets`/`x-*` deliberately
+  does not make it into `Effects` (a B-lite narrowing, not a bug).
+- **C:** the declared `svc.EnvFiles` are read in order (missing is skipped), then
+  the inline `svc.Environment` (`nil` — remove). The list of declared files is
+  kept SEPARATELY from the per-key `Entries`: an inline override can swallow all
+  of a file's keys, but the file must remain in `ServiceEnv.EnvFiles` (otherwise
+  `--files` lies).
+- **Gap:** `referenced && !InChain && len(RuntimeDefs) > 0`; effects and
+  runtime-defs are sorted for deterministic JSON.
 
-## D1: лояльное перечисление
+## D1: lenient enumeration
 
-`cli.WithoutEnvironmentResolution` — обёртка над
-`loader.Options.SkipResolveEnvironment`. Без неё `LoadProject` падает на
-отсутствующем `required:` env_file; с ней пути `svc.EnvFiles` сохраняются, а
-несуществующие мы отбрасываем сами (`os.Stat`).
+`cli.WithoutEnvironmentResolution` is a wrapper over
+`loader.Options.SkipResolveEnvironment`. Without it `LoadProject` fails on a
+missing `required:` env_file; with it, the `svc.EnvFiles` paths are preserved and
+we drop the nonexistent ones ourselves (`os.Stat`).
 
-- `SkipValidation` НЕ помогает; `WithDiscardEnvFile` — не тот рычаг (ОЧИЩАЕТ
-  `EnvFiles`). Под рычагом env_file не читается, `svc.Environment` остаётся
-  inline-only — это и делает возможной атрибуцию C.
-- Пути `env_file:` интерполируются и под рычагом (из `cli.WithEnv`, т.е. из
-  Layer-1), но НЕ из значений чужих сервисов.
+- `SkipValidation` does NOT help; `WithDiscardEnvFile` is the wrong lever (it
+  CLEARS `EnvFiles`). Under the lever env_file is not read, `svc.Environment`
+  stays inline-only — that is what makes attribution C possible.
+- `env_file:` paths are interpolated under the lever too (from `cli.WithEnv`,
+  i.e. from Layer-1), but NOT from other services' values.
 
-## include и overlay
+## include and overlay
 
-- `include:` импортирует сервис, и главный файл НЕ вправе его переопределять.
-  Строгий Compose: `services.X conflicts with imported resource`; терпимый
-  движок молча мержит → «зелено локально, красно в CI».
-- `-f`-overlay (список `COMPOSE_FILE`) — другой механизм: мержит сервис в ОДНО
-  определение, переоткрывать сервис в overlay законно. Обнаружение — по
-  `include:`/`COMPOSE_FILE`, не рекурсивным glob; `COMPOSE_DEPTH` игнорируется.
-  `env_file: required:` и `include:` требуют Docker Compose v2.24+.
+- `include:` imports a service, and the main file is NOT allowed to override it.
+  Strict Compose: `services.X conflicts with imported resource`; a tolerant
+  engine silently merges → "green locally, red in CI".
+- A `-f` overlay (the `COMPOSE_FILE` list) is a different mechanism: it merges a
+  service into ONE definition, and reopening a service in an overlay is legal.
+  Discovery follows `include:`/`COMPOSE_FILE`, not recursive globs;
+  `COMPOSE_DEPTH` is ignored. `env_file: required:` and `include:` require
+  Docker Compose v2.24+.
 
-## Чеклист подводных камней
+## Pitfalls checklist
 
-- `${VAR}` внутри YAML flow-sequence ломает парсер («did not find expected
-  ',' or ']'»): путь `env_file:` с токенами пиши блочно (`- path: ...`).
-- Отсутствующий `env_file:` — ошибка `LoadProject`; лояльно только наше
-  перечисление, реальный `docker compose` идёт без рычага.
-- Значения service-`env_file:` в интерполяцию не попадают никогда: не смешивай
-  контексты (это баг, ради которого инструмент существует).
+- A `${VAR}` inside a YAML flow-sequence breaks the parser ("did not find
+  expected ',' or ']'"): write an `env_file:` path with tokens in block form
+  (`- path: ...`).
+- A missing `env_file:` is a `LoadProject` error; only our enumeration is lenient,
+  the real `docker compose` runs without the lever.
+- Values from a service `env_file:` never reach interpolation: do not mix
+  contexts (that is the bug the tool exists for).

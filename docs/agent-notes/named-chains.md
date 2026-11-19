@@ -1,3 +1,5 @@
+**English** · [Русский](../ru/agent-notes/named-chains.md)
+
 # Named chains (`[name]` sections and `--chain`)
 
 One `.cenvkit.envchain` can define several **named chains**. Each section is a
@@ -9,7 +11,7 @@ complete list of layer-1 files; `--chain <name>` picks one per invocation.
 # lines before the first header belong to [default]
 .secrets.env
 .env
-.${D}{HOSTNAME}.env
+.${HOSTNAME}.env
 
 [ci]
 .env

@@ -1,135 +1,138 @@
-# Семантика окружений: Layer-1, Layer-2, селектор
+**English** · [Русский](../ru/agent-notes/env-semantics.md)
 
-## Два слоя и кто ими владеет
+# Environment semantics: Layer-1, Layer-2, the selector
 
-| | Layer-1 (проектная цепочка) | Layer-2 (service `env_file:`) |
+## Two layers and who owns them
+
+| | Layer-1 (project chain) | Layer-2 (service `env_file:`) |
 |---|---|---|
-| Источник | `.cenvkit.envchain` (или встроенный дефолт) | `env_file:` в compose-сервисе |
-| Область | весь проект: `${VAR}` в YAML + `COMPOSE_ENV_FILES` | только контейнер своего сервиса |
-| В `COMPOSE_ENV_FILES` | да, в порядке цепочки | **нет, никогда** |
-| В интерполяции `${VAR}` | да | нет |
-| Код | `internal/chain/chain.go` | `internal/engine/**` |
+| Source | `.cenvkit.envchain` (or the built-in default) | `env_file:` in a compose service |
+| Scope | the whole project: `${VAR}` in YAML + `COMPOSE_ENV_FILES` | only its own service's container |
+| In `COMPOSE_ENV_FILES` | yes, in chain order | **no, never** |
+| In `${VAR}` interpolation | yes | no |
+| Code | `internal/chain/chain.go` | `internal/engine/**` |
 
-Run-путь собирает `envfiles.Assemble(cr.Files, nil)` — второй аргумент всегда
-`nil` (`cmd/cenvkit/main.go`, `assemble`). Layer-2 существует только внутри
-`env-debug`/`gap-report` как доказательство гэпа.
+The run path assembles `envfiles.Assemble(cr.Files, nil)` — the second argument is
+always `nil` (`cmd/cenvkit/main.go`, `assemble`). Layer-2 exists only inside
+`env-debug`/`gap-report` as gap evidence.
 
-## Почему Layer-2 не вливается в run-цепочку
+## Why Layer-2 is not merged into the run chain
 
-Compose интерполирует YAML целиком против ОДНОЙ env-map и только потом раздаёт
-по сервисам. Сложи `env_file:` всех активных сервисов в один
-`COMPOSE_ENV_FILES` — общий ключ (`${PORT}`) станет одним глобальным значением
-для всех, то есть коллизией. Per-service область в тонком upstream-first
-инструменте недостижима, поэтому выбран режим: runtime-only при запуске,
-debug-only при перечислении. Отсюда определение гэпа: `${VAR}` определён в
-`env_file:` сервиса, но не в Layer-1 → на реальном запуске он откатится к
-`:-default`/пустому значению.
+Compose interpolates the whole YAML against ONE env map and only then distributes
+it over the services. Fold the `env_file:` of all active services into one
+`COMPOSE_ENV_FILES` and a shared key (`${PORT}`) becomes a single global value
+for everyone, that is, a collision. Per-service scope is out of reach in a thin
+upstream-first tool, so the chosen mode is: runtime-only at run time, debug-only
+at enumeration time. Hence the definition of a gap: `${VAR}` is defined in a
+service's `env_file:` but not in Layer-1 → on a real run it falls back to
+`:-default`/an empty value.
 
-## Формат `.cenvkit.envchain`
+## `.cenvkit.envchain` format
 
-- Нет файла → встроенная цепочка `.env`, `.${CENVKIT_ENV}.env`, `.secrets.env`.
-- Строки до первого заголовка `[name]` (и файл без заголовков) — неявная
-  секция `[default]`.
-- Каждая `[name]` — ПОЛНЫЙ самостоятельный список файлов, наследования из
-  `[default]` нет. Явный `[default]` позже по файлу ДОПОЛНЯЕТ неявный
-  (обе части конкатенируются — намеренно).
-- Токены: `${ENV}` ≡ `${CENVKIT_ENV}`, `${HOST}` ≡ `${HOSTNAME}`; значения
-  санитизируются до `[A-Za-z0-9._-]` — это убивает инъекции в путь.
-- Любой другой `${VAR}` остаётся литералом: файл просто не найдётся и будет
-  пропущен. Полноценного шаблонного движка в цепочке нет — не рассчитывай на
-  `${FOO:-bar}` в пути.
-- Резолвнутый путь с запятой — ошибка (запятая разделяет `COMPOSE_ENV_FILES`).
-- Относительные пути склеиваются с каталогом проекта, не с cwd.
-- Неизвестный `--chain` → exit 2 и список доступных имён (без `default`).
+- No file → the built-in chain `.env`, `.${CENVKIT_ENV}.env`, `.secrets.env`.
+- Lines before the first `[name]` header (and a file with no headers) are the
+  implicit `[default]` section.
+- Each `[name]` is a COMPLETE standalone list of files; there is no inheritance
+  from `[default]`. An explicit `[default]` later in the file EXTENDS the
+  implicit one (both parts are concatenated — deliberately).
+- Tokens: `${ENV}` ≡ `${CENVKIT_ENV}`, `${HOST}` ≡ `${HOSTNAME}`; values are
+  sanitized to `[A-Za-z0-9._-]` — this kills injections into the path.
+- Any other `${VAR}` stays a literal: the file simply will not be found and will
+  be skipped. There is no full template engine in the chain — do not count on
+  `${FOO:-bar}` in a path.
+- A resolved path containing a comma is an error (the comma separates
+  `COMPOSE_ENV_FILES`).
+- Relative paths are joined to the project directory, not to cwd.
+- An unknown `--chain` → exit 2 and the list of available names (without
+  `default`).
 
-## Порядок, last-wins, skip-missing
+## Order, last-wins, skip-missing
 
-- Порядок строк = порядок загрузки; побеждает последний файл (last-wins).
-- `.secrets.env` последним — контракт ВНУТРИ Layer-1, его проверяет
-  `env-debug --list`, а не `env-files`. Межслойных гарантий нет: `env_file:`
-  сервиса может переопределить переменную цепочки внутри контейнера. Поэтому
-  не переиспользуй имена секретов в service-файлах.
-- Отсутствующие файлы пропускаются: `chain.Resolve` (os.Stat),
-  `engine.Resolve` (os.Stat), `envfiles.Assemble` (принимает уже готовый
-  список).
-- `engine.Flatten` — исключение: `GetEnvFromFile` на отсутствующем файле
-  ОШИБАЕТСЯ, поэтому ему передают только список после `chain.Resolve`.
-- Дедуп: первый путь остаётся на своей позиции, повторы отбрасываются
+- Line order = load order; the last file wins (last-wins).
+- `.secrets.env` last is a contract INSIDE Layer-1; `env-debug --list` checks it,
+  not `env-files`. There are no cross-layer guarantees: a service's `env_file:`
+  can override a chain variable inside the container. Therefore do not reuse
+  secret names in service files.
+- Missing files are skipped: `chain.Resolve` (os.Stat), `engine.Resolve`
+  (os.Stat), `envfiles.Assemble` (accepts an already prepared list).
+- `engine.Flatten` is the exception: `GetEnvFromFile` FAILS on a missing file, so
+  it is only ever passed the list from `chain.Resolve`.
+- Dedup: the first path keeps its position, repeats are dropped
   (`envfiles.Assemble`).
 
-## Селектор `CENVKIT_ENV`
+## The `CENVKIT_ENV` selector
 
-Приоритет: непустой `CENVKIT_ENV` из shell > `CENVKIT_ENV=` в корневом
-`.env` > `dev`. Источник для шапки `--overview`:
+Precedence: nonempty `CENVKIT_ENV` from the shell > `CENVKIT_ENV=` in the root
+`.env` > `dev`. Source for the `--overview` header:
 `shell` | `.env` | `default` (`chain.Result.ComposeEnvSource`).
 
-- Значение санитизируется; пустое значение в shell не побеждает.
-- `chain.Resolve` добавляет `CENVKIT_ENV=<резолв>` в `Result.Vars`, если его
-  там ещё нет.
-- `-e <env>` у `run`/`env` дописывает `CENVKIT_ENV=<v>` ПОСЛЕ
-  `os.Environ()` и тем перерезолвливает цепочку (last-wins в `osEnvMap`).
-  Так же `validate --all` проходит dev→prod.
-- `CENVKIT_ENV` — НЕ `COMPOSE_ENV_FILES` (реальная переменная compose).
-  Удалённые исторические имена не возвращаем.
-- `--chain <name>` ортогонален селектору: сначала выбирается секция, внутри
-  неё `${CENVKIT_ENV}` всё ещё выбирает тир.
+- The value is sanitized; an empty value in the shell does not win.
+- `chain.Resolve` adds `CENVKIT_ENV=<resolved>` to `Result.Vars` if it is not
+  there yet.
+- `-e <env>` on `run`/`env` appends `CENVKIT_ENV=<v>` AFTER `os.Environ()` and
+  thereby re-resolves the chain (last-wins in `osEnvMap`). `validate --all`
+  walks dev→prod the same way.
+- `CENVKIT_ENV` is NOT `COMPOSE_ENV_FILES` (a real compose variable). We do not
+  bring back removed historical names.
+- `--chain <name>` is orthogonal to the selector: the section is selected first,
+  and inside it `${CENVKIT_ENV}` still selects the tier.
 
-## Shell-wins и что такое `Result.Vars`
+## Shell-wins and what `Result.Vars` is
 
-- `Result.Vars` = переменные файлов (в порядке цепочки) + ОС-окружение поверх;
-  shell побеждает. Это SEED для engine, а НЕ готовое окружение процесса.
-- `envmap.Resolve` собирает `Full` = process env + значения цепочки
-  add-only-if-unset (shell wins) и `ChainKeys` — только ключи, которые внесла
-  цепочка. `cenvkit env` печатает именно `ChainKeys` и не дампит наследованное
-  окружение в логи CI.
-- `--no-expand` выключает только раскрытие `${VAR}`, но не приоритет:
-  shell-wins overlay работает в обоих режимах.
+- `Result.Vars` = file variables (in chain order) + the OS environment on top; the
+  shell wins. It is a SEED for the engine, NOT a ready process environment.
+- `envmap.Resolve` builds `Full` = process env + chain values added only if unset
+  (shell wins), and `ChainKeys` — only the keys the chain contributed.
+  `cenvkit env` prints exactly `ChainKeys` and does not dump the inherited
+  environment into CI logs.
+- `--no-expand` disables only `${VAR}` expansion, not precedence: the shell-wins
+  overlay works in both modes.
 
-## `interpEnv` в engine
+## `interpEnv` in engine
 
-`engine.Provenance` строит один интерполяционный контекст: `Flatten(shellMap,
-layer1Files, true)`, затем поверх — shell (`in.Env`). Всё, что интерполирует
-(атрибуция A, overlay, mapping для B-lite, `cli.WithEnv`,
-`details.Environment`), читает ТОЛЬКО этот контекст. `in.Env` — исключительно
-окружение процесса: `chain.Result.Vars` туда передавать нельзя (в нём
-нераскрытые значения файлов). Смешение контекстов возвращает баг, ради которого
-инструмент существует.
+`engine.Provenance` builds a single interpolation context: `Flatten(shellMap,
+layer1Files, true)`, then the shell (`in.Env`) on top. Everything that
+interpolates (attribution A, overlay, the mapping for B-lite, `cli.WithEnv`,
+`details.Environment`) reads ONLY this context. `in.Env` is exclusively the
+process environment: `chain.Result.Vars` must not be passed there (it holds
+unexpanded file values). Mixing contexts brings back the bug the tool exists for.
 
-## `CENVKIT_ENV` в дочернем окружении
+## `CENVKIT_ENV` in the child environment
 
-`composeEnvironment` (`cmd/cenvkit/main.go`) отдаёт детям `os.Environ()` +
-`COMPOSE_ENV_FILES=...` (+ `COMPOSE_DISABLE_ENV_FILE=1`, если цепочка пуста).
-`Result.Vars` в дочернее окружение не попадает. Следствие: `${CENVKIT_ENV}`
-внутри `COMPOSE_FILE` разрешается, только если переменная реально есть в
-shell/цепочке; «дефолтный dev» сам по себе не проставляется. Добавляешь нового
-потребителя цепочки — прокидывай резолвнутый `CENVKIT_ENV` явно.
+`composeEnvironment` (`cmd/cenvkit/main.go`) gives the children `os.Environ()` +
+`COMPOSE_ENV_FILES=...` (+ `COMPOSE_DISABLE_ENV_FILE=1` if the chain is empty).
+`Result.Vars` never reaches the child environment. Consequence: `${CENVKIT_ENV}`
+inside `COMPOSE_FILE` resolves only if the variable is actually present in the
+shell/chain; the "default dev" itself is not set. When you add a new chain
+consumer, pass the resolved `CENVKIT_ENV` explicitly.
 
-## Фикстуры: сидинг
+## Fixtures: seeding
 
-`examples/monorepo` — эталон парности, править его нельзя.
+`examples/monorepo` is the parity reference; it must not be edited.
 
-- Корневые `.env`, `.dev.env`, `.prod.env`, `.secrets.env` — gitignored; в
-  репозитории только `example.*`. Голая копия даёт пустой Layer-1 — это
-  корректный skip-missing, а не баг.
-- Сервисные dotfiles (`web/.web.env`, `api/.api.env`,
-  `services/reports/.reports.env`) — ЗАКОММИЧЕНЫ и приходят с копией. Сидить их
-  не надо; писать поверх них заглушки нельзя.
-- Acceptance: копия в `t.TempDir()` + сидинг `example.*` → `.*`
-  (`stageMonorepo`). Новая именованная секция требует закоммиченного
-  `example.<x>.env` и строки в сидинге, иначе локально зелено, а на чистом
-  checkout — нет. Проверка: `git ls-files` + `rm <dotfile> && go test ./test/...`.
+- The root `.env`, `.dev.env`, `.prod.env`, `.secrets.env` are gitignored; the
+  repository only has `example.*`. A bare copy yields an empty Layer-1 — this is
+  correct skip-missing, not a bug.
+- Service dotfiles (`web/.web.env`, `api/.api.env`,
+  `services/reports/.reports.env`) are COMMITTED and come with the copy. There is
+  no need to seed them; do not write stubs over them.
+- Acceptance: a copy in `t.TempDir()` + seeding `example.*` → `.*`
+  (`stageMonorepo`). A new named section requires a committed
+  `example.<x>.env` and a line in the seeding, otherwise it is green locally and
+  not on a clean checkout. Check: `git ls-files` +
+  `rm <dotfile> && go test ./test/...`.
 
-## Debug-вью: что чем смотреть
+## Debug views: what to use
 
-| Флаг | Что показывает |
+| Flag | What it shows |
 |---|---|
-| `env-debug` / `--list` | файлы Layer-1 (secrets last) |
-| `--files` | `COMPOSE_ENV_FILES` (Layer-1) + runtime-only `env_file:` по сервисам |
-| `--trace --var V` | победитель, перекрытые источники, `Effects`, гэп и fallback |
-| `--value --var V` | победившее значение из интерполяционного контекста |
-| `--effective [--service S]` | эффективное окружение сервиса с источниками |
-| `--overview` | послойный разбор: сырые значения, маркеры `+`/`~`/`·` |
-| `--json` | то же машинно, всегда без ANSI |
+| `env-debug` / `--list` | Layer-1 files (secrets last) |
+| `--files` | `COMPOSE_ENV_FILES` (Layer-1) + runtime-only `env_file:` per service |
+| `--trace --var V` | the winner, shadowed sources, `Effects`, the gap and the fallback |
+| `--value --var V` | the winning value from the interpolation context |
+| `--effective [--service S]` | the service's effective environment with sources |
+| `--overview` | layered breakdown: raw values, `+`/`~`/`·` markers |
+| `--json` | the same, machine-readable, always without ANSI |
 
-`env-files` печатает только Layer-1 (run-путь). `gap-report` — только гэпы:
-exit 0 чисто / 1 гэпы / 2 нет compose-файла.
+`env-files` prints only Layer-1 (the run path). `gap-report` — only gaps:
+exit 0 clean / 1 gaps / 2 no compose file.

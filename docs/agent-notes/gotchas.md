@@ -1,16 +1,18 @@
-# Грабли
+**English** · [Русский](../ru/agent-notes/gotchas.md)
 
-Каждый пункт — «симптом → причина → что делать». Проверялось на этом дереве и
-живых пробах.
+# Gotchas
 
-## macOS / BSD-утилиты
+Each item is "symptom → cause → what to do". Verified on this tree and with live
+probes.
 
-- **`sed -i` без аргумента.** BSD требует явный суффикс бэкапа:
-  `sed -i '' 's/a/b/g' file`. GNU-форма `-i` на macOS съедает следующую часть
-  команды и печатает загадочную ошибку.
-- **`grep -lZ ... | xargs -0 sed` схлопывает имена.** sed получает один
-  склеенный аргумент и правит ноль файлов; цепочка `&&` при этом выглядит
-  успешной, если раньше отработал `go mod edit`. Построчный цикл надёжнее:
+## macOS / BSD utilities
+
+- **`sed -i` without an argument.** BSD requires an explicit backup suffix:
+  `sed -i '' 's/a/b/g' file`. The GNU form `-i` on macOS eats the next part of
+  the command and prints a mysterious error.
+- **`grep -lZ ... | xargs -0 sed` collapses names.** sed receives one glued
+  argument and edits zero files; the `&&` chain still looks successful if
+  `go mod edit` ran earlier. A line-by-line loop is more reliable:
 
   ```sh
   find . -name '*.go' -exec grep -l 'OLD' {} + | while IFS= read -r f; do
@@ -18,95 +20,97 @@
   done
   ```
 
-  Проверка: `grep -rn 'OLD' --include='*.go' . go.mod` (пусто = чисто).
-- Ограничивай массовые замены своим ланом (`--include='*.go'`), иначе зацепишь
-  docs/yaml, которые правит кто-то другой.
+  Check: `grep -rn 'OLD' --include='*.go' . go.mod` (empty = clean).
+- Keep bulk replacements within your lane (`--include='*.go'`), otherwise you hit
+  docs/yaml that someone else is editing.
 
-## Переименования
+## Renames
 
-- **`COMPOSE_ENV` → `CENVKIT_ENV` без границы слова ломает
-  `COMPOSE_ENV_FILES`.** `COMPOSE_ENV` — префикс реальной переменной Docker
-  Compose, поэтому наивный `s/COMPOSE_ENV/CENVKIT_ENV/` даёт несуществующую
-  `CENVKIT_ENV_FILES`. Сборка остаётся зелёной, если порча попала в строки и
-  комментарии. Используй `s/COMPOSE_ENV\b/.../`, а после цикла проверяй:
-  `grep -rn CENVKIT_ENV_FILES internal/ cmd/ test/ examples/` → пусто.
-- После любого переименования грепай СТАРОЕ имя по всему дереву, включая
-  `docs/` и `CHANGELOG.md`.
+- **`COMPOSE_ENV` → `CENVKIT_ENV` without a word boundary breaks
+  `COMPOSE_ENV_FILES`.** `COMPOSE_ENV` is a prefix of a real Docker Compose
+  variable, so a naive `s/COMPOSE_ENV/CENVKIT_ENV/` produces a nonexistent
+  `CENVKIT_ENV_FILES`. The build stays green if the corruption lands in strings
+  and comments. Use `s/COMPOSE_ENV\b/.../`, and after the loop check:
+  `grep -rn CENVKIT_ENV_FILES internal/ cmd/ test/ examples/` → empty.
+- After any rename, grep the OLD name across the whole tree, including `docs/`
+  and `CHANGELOG.md`.
 
-## Тесты и окружение
+## Tests and environment
 
-- **`t.Setenv("K", "")` НЕ удаляет переменную.** Она остаётся в `os.Environ()`
-  как `K=`, а движок считает наличие: `InChain=true` → гэп маскируется.
-  In-process: `os.Unsetenv` + восстановление в `t.Cleanup`. Дочерний бинарь:
-  `envWithout(keys...)`.
-- **`cenvkit env` (dotenv) заключает значения в кавычки**: `CI="true"`.
-  Ассерт на `CI=true` падает при верном значении.
-- **`run` ищет дочерний бинарь по PATH из слитого окружения**, а не по PATH
-  обёртки (`lookPathInEnv`, `cmd/cenvkit/lookup.go`): тест с `PATH=` в `.env`
-  должен находить свой бинарь и сохранять его код выхода.
-- **`go build ./cmd/cenvkit` создаёт бинарь `cenvkit`** и затирает
-  одноимённый POSIX-лаунчер `cenvkit` в корне. Собирай `make dev-build`
-  (`.cenvkit.bin`, `Makefile`) или `-o` в другое место; бинарь не коммитим.
-- **Лаунчер `./cenvkit` собирает во временный каталог и запускает в cwd
-  вызывающего** (`go -C <repo> build`). Поэтому он работает и рядом с чужим
-  `go.mod`; на это есть регрессионный тест.
-- Из каталога вне модуля `go run ./cmd/cenvkit` не работает (нет `go.mod` выше
-  по дереву): собери бинарь один раз и запускай его.
+- **`t.Setenv("K", "")` does NOT remove the variable.** It stays in
+  `os.Environ()` as `K=`, and the engine counts presence: `InChain=true` → the
+  gap is masked. In-process: `os.Unsetenv` + restore in `t.Cleanup`. Child
+  binary: `envWithout(keys...)`.
+- **`cenvkit env` (dotenv) quotes values**: `CI="true"`. An assertion for
+  `CI=true` fails even with the right value.
+- **`run` looks up the child binary by the PATH of the merged environment**, not
+  by the wrapper's PATH (`lookPathInEnv`, `cmd/cenvkit/lookup.go`): a test with
+  `PATH=` in `.env` must find its binary and preserve its exit code.
+- **`go build ./cmd/cenvkit` creates a `cenvkit` binary** and overwrites the
+  same-named POSIX launcher `cenvkit` in the root. Build with `make dev-build`
+  (`.cenvkit.bin`, `Makefile`) or `-o` to another place; the binary is not
+  committed.
+- **The `./cenvkit` launcher builds into a temporary directory and runs in the
+  caller's cwd** (`go -C <repo> build`). That is why it also works next to
+  someone else's `go.mod`; a regression test covers this.
+- From a directory outside the module `go run ./cmd/cenvkit` does not work (no
+  `go.mod` up the tree): build the binary once and run it.
 
-## Терминал и цвета
+## Terminal and colors
 
-- **Только per-renderer профили.** `lipgloss.NewRenderer(w)` +
-  `SetColorProfile(...)`; глобальный `lipgloss.SetColorProfile` мутирует
-  дефолтный рендерер и протечёт в JSON-ветку. `internal/style/style.go` —
-  единственный импортёр lipgloss.
-- **`AdaptiveColor` подвешивает CLI**: разрешение фона делает блокирующий
-  OSC-запрос к терминалу. Используется фиксированная ANSI-16 палитра, читаемая
-  на светлом и тёмном фоне.
-- Автодетект через `NewRenderer` сам учитывает `NO_COLOR`, `CLICOLOR_FORCE`,
-  TTY и `CI`; `--color=never` → Ascii, `--color=always` → ANSI256. `--json`
-  всегда без ANSI (высший приоритет).
-- Ошибки гейтятся по `os.Stderr` отдельным стилером, а `--color` для них
-  читается сканом `os.Args` (`colorFlagFromArgs`, `cmd/cenvkit/main.go`):
-  `PersistentPreRunE` не выполняется, если парсинг флагов уже упал.
-- **Стиль `Value` намеренно пустой**: ANSI в значениях ломает табулированное
-  выравнивание `--effective`. Дашь цвет — правь выравнивание в том же изменении.
-- **ANSI/OSC из данных не вычищается** в human-выводе (`internal/provenance/render.go`):
-  значения, пути и имена секций печатаются как есть (`--json` экранирует).
-  Добавляешь новый вывод — санитируй на границе рендера.
+- **Per-renderer profiles only.** `lipgloss.NewRenderer(w)` +
+  `SetColorProfile(...)`; the global `lipgloss.SetColorProfile` mutates the
+  default renderer and leaks into the JSON branch. `internal/style/style.go` is
+  the only lipgloss importer.
+- **`AdaptiveColor` hangs the CLI**: background resolution issues a blocking OSC
+  query to the terminal. A fixed ANSI-16 palette is used, readable on both light
+  and dark backgrounds.
+- Auto-detection via `NewRenderer` accounts for `NO_COLOR`, `CLICOLOR_FORCE`,
+  TTY, and `CI` by itself; `--color=never` → Ascii, `--color=always` → ANSI256.
+  `--json` is always without ANSI (highest priority).
+- Errors are gated on `os.Stderr` by a separate styler, and `--color` for them is
+  read by scanning `os.Args` (`colorFlagFromArgs`, `cmd/cenvkit/main.go`):
+  `PersistentPreRunE` does not run if flag parsing already failed.
+- **The `Value` style is deliberately empty**: ANSI in values breaks the tabbed
+  alignment of `--effective`. If you add color, fix the alignment in the same
+  change.
+- **ANSI/OSC from data is not stripped** in human output
+  (`internal/provenance/render.go`): values, paths, and section names are printed
+  as-is (`--json` escapes). When you add a new output, sanitize at the render
+  boundary.
 
-## Линтер и кэш
+## Linter and cache
 
-- Ложная пачка `SA5011` (или похожие typecheck-ошибки) при грязном кэше:
-  сначала `golangci-lint cache clean`, повтор, и только потом правь код.
-- «Тихий» зелёный: `make lint`/`make ci` пропускают lint, если бинаря нет.
-  Проверяй `command -v golangci-lint` прежде чем говорить «полный гейт».
-- `golangci-lint` под неверным Go падает на stdlib — см.
-  [testing-and-ci.md](testing-and-ci.md), раздел версионных ловушек.
+- A false batch of `SA5011` (or similar typecheck errors) with a dirty cache:
+  `golangci-lint cache clean` first, retry, and only then edit the code.
+- A "quiet" green: `make lint`/`make ci` skip lint if the binary is absent. Check
+  `command -v golangci-lint` before saying "full gate".
+- `golangci-lint` under the wrong Go fails on the stdlib — see
+  [testing-and-ci.md](testing-and-ci.md), the version traps section.
 
 ## compose / engine
 
-- **${VAR} внутри YAML flow-sequence** (`env_file: [./${X}/.b.env]`) — ошибка
-  парсера YAML ещё до интерполяции. Пиши блочную форму:
+- **${VAR} inside a YAML flow-sequence** (`env_file: [./${X}/.b.env]`) — a YAML
+  parser error even before interpolation. Write the block form:
   `- path: ./${X}/.b.env` + `required: false`.
-- **Отсутствующий `env_file:`** — ошибка `LoadProject` (если не включён
-  `cli.WithoutEnvironmentResolution`): перечисление обязано фильтровать пути
-  (`os.Stat`) и/или включать этот рычаг.
-- **`--no-expand`** не раскрывает `${VAR}`, но оставляет приоритет shell-wins:
-  это про раскрытие, не про precedence.
-- Значения `service env_file:` никогда не участвуют в интерполяции: если
-  `${VAR}` «есть в файле сервиса», на запуске он всё равно откатится. Не
-  «лечи» это правкой рендера — это контракт.
+- **A missing `env_file:`** is a `LoadProject` error (unless
+  `cli.WithoutEnvironmentResolution` is enabled): enumeration must filter paths
+  (`os.Stat`) and/or enable that lever.
+- **`--no-expand`** does not expand `${VAR}` but keeps shell-wins precedence: it
+  is about expansion, not precedence.
+- `service env_file:` values never take part in interpolation: if `${VAR}` "is
+  in the service file", it still falls back on a run. Do not "cure" this by
+  editing the renderer — it is a contract.
 
-## CLI-обёртки
+## CLI wrappers
 
-- `compose` включает `DisableFlagParsing`, поэтому persistent-флаги
-  (`--project-dir`, `--chain`, `--color`) вырезаются вручную
-  (`extractWrapperFlags`) до передачи в docker. Забудешь — docker отвергнет
-  неизвестный флаг.
-- Дочерний `docker compose` запускай с `Dir = projectDir`, а не из cwd
-  процесса.
-- `run` требует `--`; `ArgsLenAtDash() < 0` → exit 2. Коды: 126 (не
-  исполняемый), 127 (не найден), 128+signal.
-- `gap-report`: 0 — чисто, 1 — гэпы, 2 — нет compose-файла (это НЕ «чисто»).
-- Новый wrapper-флаг без извлечения попадёт в docker compose как аргумент —
-  проверяй сценарий `cenvkit compose ... --help` после добавления.
+- `compose` enables `DisableFlagParsing`, so persistent flags (`--project-dir`,
+  `--chain`, `--color`) are extracted manually (`extractWrapperFlags`) before
+  they are passed to docker. Forget it — and docker rejects an unknown flag.
+- Run the child `docker compose` with `Dir = projectDir`, not from the process
+  cwd.
+- `run` requires `--`; `ArgsLenAtDash() < 0` → exit 2. Codes: 126 (not
+  executable), 127 (not found), 128+signal.
+- `gap-report`: 0 — clean, 1 — gaps, 2 — no compose file (this is NOT "clean").
+- A new wrapper flag without extraction lands in docker compose as an argument —
+  check the `cenvkit compose ... --help` scenario after adding it.

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26"
+  GO_VERSION: "1.26.11"
   # Docker Compose used by the docker acceptance gate — PINNED, not "latest".
   # Bump COMPOSE_VERSION and COMPOSE_SHA256_LINUX_X86_64 together, in a dedicated
   # commit, only after the acceptance suite passes against the new release.
@@ -225,4 +225,31 @@ jobs:
       - name: docker compose version (upstream latest)
         run: docker compose version
       - name: acceptance suite (docker) against latest Compose
-        run: go test ./test/... -count=1
+        id: latest-acceptance
+        # Capture the status instead of aborting, so the summary below always runs.
+        run: |
+          set +e
+          go test ./test/... -count=1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit $code
+      - name: drift summary
+        # This job is advisory (continue-on-error), and an invisible advisory is
+        # noise: publish the pinned-vs-latest comparison into the run summary and
+        # raise an annotation when upstream has moved on.
+        if: always()
+        run: |
+          latest="$(docker compose version --short 2>/dev/null || echo unknown)"
+          {
+            echo "### Docker Compose drift"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| pinned in CI | `${{ env.COMPOSE_VERSION }}` |"
+            echo "| upstream latest | `$latest` |"
+            echo "| acceptance vs latest | `${{ steps.latest-acceptance.outputs.exit_code }}` (0 = no drift detected) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          code="${{ steps.latest-acceptance.outputs.exit_code }}"
+          if [ "$code" != "0" ]; then
+            echo "::warning title=Docker Compose drift::acceptance fails against upstream latest; the pinned gate still decides. See the acceptance log."
+          fi

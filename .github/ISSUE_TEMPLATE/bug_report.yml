@@ -1,0 +1,98 @@
+name: Bug report
+description: Report a reproducible defect in cenvkit
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search existing
+        issues and check the [user guide](https://github.com/InfernalRabbit/cenvkit/blob/main/docs/guide.md)
+        and the [command reference](https://github.com/InfernalRabbit/cenvkit/blob/main/docs/cenvkit.md)
+        first.
+
+        Do **not** paste secrets, tokens, or real hostnames. Use dummy values.
+        Security vulnerabilities go through the
+        [private process](https://github.com/InfernalRabbit/cenvkit/blob/main/SECURITY.md),
+        not this form.
+  - type: input
+    id: version
+    attributes:
+      label: cenvkit version
+      description: "Output of `cenvkit version` (include the compose-go line if it prints one)."
+      placeholder: "0.7.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      description: "Operating system, version, and CPU architecture."
+      placeholder: "macOS 15.1 arm64"
+    validations:
+      required: true
+  - type: input
+    id: compose
+    attributes:
+      label: Docker Compose version
+      description: "Output of `docker compose version --short`. Required only if the issue involves `cenvkit compose` or `cenvkit validate`."
+      placeholder: "v2.30.3"
+    validations:
+      required: false
+  - type: textarea
+    id: command
+    attributes:
+      label: How you ran cenvkit
+      description: "The exact command(s), the project layout, and the relevant `.cenvkit.envchain`, `COMPOSE_FILE`, or compose YAML. Redact values."
+      render: shell
+      placeholder: |
+        cenvkit env-files
+        cenvkit env-debug --trace --var APP_PORT --color=never
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: "What you expected to happen, and why."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: "What happened instead, including the exit code if it matters."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output with --color=never
+      description: "Paste the full output of the failing command captured with `--color=never` so no ANSI escapes end up in the report."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal reproducible fixture
+      description: "The smallest project that reproduces the problem: compose file plus env-chain files, with dummy values. Say whether Docker or a daemon is required."
+      render: yaml
+      placeholder: |
+        # docker-compose.yml + .cenvkit.envchain + env files
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: "I searched existing issues and the documentation."
+          required: true
+        - label: "I redacted secrets, tokens, and real hostnames from this report."
+          required: true
+        - label: "This is not a security vulnerability (those go through SECURITY.md)."
+          required: true
+        - label: "I reproduced this on the latest cenvkit release."
+          required: false

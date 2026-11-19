@@ -1,126 +1,132 @@
-# Тесты, гейты и CI
+**English** · [Русский](../ru/agent-notes/testing-and-ci.md)
 
-## Локальный гейт (DoD)
+# Tests, gates, and CI
+
+## Local gate (DoD)
 
 ```sh
 go build ./...
 go vet ./...
-gofmt -l .                                       # должно быть пусто
+gofmt -l .                                       # must be empty
 go test ./... -count=1
-SMOKE_SKIP_DOCKER=1 go test ./... -count=1       # docker-free подмножество
-go test ./test/... -v -count=1                   # с доступным docker compose
-golangci-lint run ./...                          # см. «версионные ловушки»
-goreleaser check                                 # при правке release-конфига
+SMOKE_SKIP_DOCKER=1 go test ./... -count=1       # docker-free subset
+go test ./test/... -v -count=1                   # with docker compose available
+golangci-lint run ./...                          # see "version traps"
+goreleaser check                                 # when editing the release config
 ```
 
-`make ci` (`Makefile`) = `vet fmt-check seam build test` (+lint, если бинарь
-найден). При этом `make lint`/`make ci` МОЛЧА пропускают golangci-lint, если
-его нет в PATH — «полный зелёный» на такой машине недостоверен.
+`make ci` (`Makefile`) = `vet fmt-check seam build test` (+lint if the binary is
+found). At the same time `make lint`/`make ci` SILENTLY skip golangci-lint when
+it is not in PATH — "fully green" on such a machine is not trustworthy.
 
-**Зелёный без docker-пути не считается полным:** `SMOKE_SKIP_DOCKER=1`
-пропускает docker-gated ассерты, а они проверяют реальную парность с compose.
-Пропущенный ассерт ничего не доказывает.
+**Green without the docker path does not count as complete:**
+`SMOKE_SKIP_DOCKER=1` skips docker-gated assertions, and those check real parity
+with compose. A skipped assertion proves nothing.
 
-## gofmt — после ПОСЛЕДНЕЙ правки
+## gofmt — after the LAST edit
 
-`go test` форматирование не проверяет. Классический промах: гейт прогнан,
-сделана ещё одна правка — и `gofmt -l .` уже не пуст. Перед «зелено»
-перезапускай `make fmt-check` (или `gofmt -l .`) на финальном дереве.
+`go test` does not check formatting. The classic miss: the gate was run, one more
+edit was made — and `gofmt -l .` is no longer empty. Before "green", rerun
+`make fmt-check` (or `gofmt -l .`) on the final tree.
 
-## Версионные ловушки
+## Version traps
 
 ### golangci-lint
 
-- Собирай линтер ПРОЕКТНЫМ Go:
+- Build the linter with the PROJECT Go:
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
-  Предсобранный бинарь со старым Go отказывается линтить модуль с новым
-  `go` в `go.mod` («the Go language version used to build golangci-lint is
-  lower than the targeted Go version»). CI делает именно `go install`.
-- Локально дефолтный `go` может быть НОВЕЕ проектного → линтер падает на
-  typecheck stdlib. Запускай с `GOTOOLCHAIN=go<версия из go.mod>` (сейчас 1.26.3).
-- Линтер ПЕЧАТАЕТ НЕ ВСЁ: `max-same-issues`/`max-issues-per-linter` режут
-  список. «11 issues» может означать ~40 сайтов — доводи до истинного `0`.
-- Конфиг v2-формата (`.golangci.yml`): `linters.enable` (errcheck, govet,
+  A prebuilt binary built with an older Go refuses to lint a module with a newer
+  `go` in `go.mod` ("the Go language version used to build golangci-lint is
+  lower than the targeted Go version"). CI does exactly `go install`.
+- Locally the default `go` may be NEWER than the project one → the linter fails
+  on the stdlib typecheck. Run with `GOTOOLCHAIN=go<version from go.mod>`
+  (currently 1.26.11).
+- The linter does NOT PRINT EVERYTHING: `max-same-issues`/`max-issues-per-linter`
+  cut the list. "11 issues" may mean ~40 sites — drive it to a true `0`.
+- v2-format config (`.golangci.yml`): `linters.enable` (errcheck, govet,
   ineffassign, staticcheck, unused) + `formatters.enable` (gofmt).
-- Грязный кэш даёт ложные срабатывания (например, пачку `SA5011` в тестах).
-  Лечится `golangci-lint cache clean`, а не правкой кода.
+- A dirty cache produces false positives (for example, a batch of `SA5011` in
+  tests). It is cured by `golangci-lint cache clean`, not by editing code.
 
 ### Docker Compose
 
-- Локальный и CI-движок — РАЗНЫЕ версии: CI ставит latest с релизов, локально
-  то, что принесла установка. Терпимость к `include:` + переопределению
-  импортированного сервиса различается: терпимый движок молча мержит, строгий
-  падает (`services.X conflicts with imported resource`).
-- Следствие: зелёный локальный acceptance не доказывает зелёный CI. Для
-  изменений, трогающих compose, смотри `docker compose version` в логе и
-  проверяй на строгом движке (пинованный контейнер), а не только на своём.
-- Acceptance-тесты конфиг-онли (демон не нужен), но `dockerAvailable()` требует
-  успешного `docker compose version`.
+- The CI engine is PINNED (`COMPOSE_VERSION` + sha256 in `ci.yml`); locally you run
+  whatever the installation brought, and a non-blocking `compose-latest` job runs the
+  same acceptance against upstream latest to report drift. Tolerance for `include:` +
+  overriding an imported service differs: a tolerant engine merges silently, a
+  strict one fails (`services.X conflicts with imported resource`).
+- Consequence: a green local acceptance does not prove a green CI. For
+  compose-related changes, look at `docker compose version` in the log and verify
+  on a strict engine (the pinned container), not only on your own.
+- The acceptance tests are config-only (no daemon needed), but
+  `dockerAvailable()` requires a successful `docker compose version`.
 
-## Кэш `go test`
+## `go test` cache
 
-Go переиспользует кэш результатов `go test`, когда входы не менялись, а CI
-гоняет тесты без `-count=1`. `dockerAvailable()` — внешняя команда, в ключ
-кэша она не входит, поэтому кэшированный PASS способен скрыть, что docker-gated
-ассерты вообще не выполнялись. Локально всегда `-count=1`.
+Go reuses the `go test` result cache when the inputs have not changed, while CI
+runs tests without `-count=1`. `dockerAvailable()` is an external command and is
+not part of the cache key, so a cached PASS can hide that the docker-gated
+assertions never ran at all. Locally, always `-count=1`.
 
-## Acceptance-харнесс (`test/`)
+## Acceptance harness (`test/`)
 
-- `TestMain` собирает СВОЙ бинарь (`go build -o <tmp>/cenvkit ../cmd/cenvkit`):
-  предсобранный не нужен. Сборка идёт в общий кэш, поэтому на холодной машине
-  возможен флейк при параллельном `go test ./...`; воспроизводился не всегда —
-  держи в уме при диагностике «моргающих» падений.
-- `stageMonorepo` копирует `examples/monorepo` в `t.TempDir()` и сидит
-  корневые dotfiles из `example.*`. Исходную фикстуру не мутируем никогда.
-- `dockerAvailable()`: `SMOKE_SKIP_DOCKER=1` → false (короткое замыкание),
-  иначе однократная проба `docker compose version` (`sync.Once`). Так suite
-  корректно скипается на хосте без docker.
-- Хелперы: `runCenvkit` (CombinedOutput), `runCenvkitSplit` (stdout/stderr/exit
-  раздельно — для негативных проверок), `envWithout(...)` (окружение процесса
-  минус ключи — для дочернего бинаря).
+- `TestMain` builds ITS OWN binary (`go build -o <tmp>/cenvkit ../cmd/cenvkit`):
+  a prebuilt one is not needed. The build goes into the shared cache, so on a cold
+  machine a flake is possible under parallel `go test ./...`; it did not always
+  reproduce — keep it in mind when diagnosing "blinking" failures.
+- `stageMonorepo` copies `examples/monorepo` into `t.TempDir()` and seeds the root
+  dotfiles from `example.*`. We never mutate the source fixture.
+- `dockerAvailable()`: `SMOKE_SKIP_DOCKER=1` → false (short circuit), otherwise a
+  one-time `docker compose version` probe (`sync.Once`). That way the suite skips
+  correctly on a host without docker.
+- Helpers: `runCenvkit` (CombinedOutput), `runCenvkitSplit` (stdout/stderr/exit
+  separately — for negative checks), `envWithout(...)` (the process environment
+  minus keys — for the child binary).
 
-## Счётчик ассертов
+## Assertion counter
 
-- `const declaredAssertions = <N> + reviewRegressionAssertions` — единственный
-  источник истины. Заголовок файла (строка 2, «Current assertion count: N.»)
-  проверяется `TestAssertionCountHeader`: меняешь одно — меняй второе.
-- Считаются АССЕРТЫ, а не `func Test`: функций всегда меньше, чем ассертов
-  (один сценарий даёт несколько). Это не расхождение само по себе.
-- Историческая болезнь — устаревшие числа в других комментариях того же файла.
-  После правки ищи по всему файлу:
+- `const declaredAssertions = <N> + reviewRegressionAssertions` is the single
+  source of truth. The file header (line 2, "Current assertion count: N.") is
+  checked by `TestAssertionCountHeader`: change one — change the other.
+- ASSERTIONS are counted, not `func Test`: there are always fewer functions than
+  assertions (one scenario yields several). That is not a discrepancy by itself.
+- A historical disease — stale numbers in other comments of the same file. After
+  an edit, search the whole file:
   `grep -nE '[0-9]+ (total|assertion|count)|count: [0-9]+' test/cenvkit-acceptance_test.go`
-  и сверяй каждое (осторожно с `0o644` — это не счётчик).
+  and check each one (careful with `0o644` — it is not a counter).
 
 ## CI (`.github/workflows/ci.yml`)
 
-| Job | Что делает |
+| Job | What it does |
 |---|---|
-| `lint` | `go vet`, gate по `gofmt -l`, seam-проверка compose-go, `golangci-lint` через `go install`, `sh -n` по `cenvkit`+`scripts/ci/*.sh` и офлайн-селфтест инсталлера |
+| `lint` | `go vet`, a `gofmt -l` gate, the compose-go seam check, `golangci-lint` via `go install`, `sh -n` over `cenvkit`+`scripts/ci/*.sh`, and the offline installer self-test |
 | `goreleaser-check` | `goreleaser check` |
-| `release-snapshot` | `goreleaser release --snapshot --clean --skip=publish` — все 6 таргетов + архивы собираются ДО тега |
-| `test` (ubuntu + macos) | `go build`, `go test ./... -count=1` с `SMOKE_SKIP_DOCKER=1` (== no-docker acceptance: `./...` включает `./test`) |
-| `acceptance-docker` | ставит **пиннутый** Compose (`COMPOSE_VERSION` + sha256 из env-блока), сверяет `version --short`, `go test ./test/... -v -count=1` |
-| `compose-latest` | необязательный (`continue-on-error`) дрейф-детектор: тот же acceptance против upstream latest |
+| `release-snapshot` | `goreleaser release --snapshot --clean --skip=publish` — all 6 targets + archives are built BEFORE the tag |
+| `test` (ubuntu + macos) | `go build`, `go test ./... -count=1` with `SMOKE_SKIP_DOCKER=1` (== no-docker acceptance: `./...` includes `./test`) |
+| `acceptance-docker` | installs the **pinned** Compose (`COMPOSE_VERSION` + sha256 from the env block), verifies `version --short`, `go test ./test/... -v -count=1` |
+| `compose-latest` | optional (`continue-on-error`) drift detector: the same acceptance against upstream latest |
 
-Скрипты `scripts/ci/`: `cenvkit-install.sh` (пин версии+sha256, `CENVKIT_MIRROR` /
-`CENVKIT_MIRROR_AUTH`, `CENVKIT_LOCAL_BIN` для air-gap), `cenvkit-publish.sh`
-(Generic Package Registry: сверка `checksums.txt` → upload → проверка скачивания).
-`cenvkit-install-selftest.sh` собирает релизообразный архив, отдаёт его через
-`file://`-зеркало и проверяет, что верный sha256 ставится, а неверный — нет. Гоняется
-в CI на каждый push, сети не требует.
+The `scripts/ci/` scripts: `cenvkit-install.sh` (version pin + sha256,
+`CENVKIT_MIRROR` / `CENVKIT_MIRROR_AUTH`, `CENVKIT_LOCAL_BIN` for air-gap),
+`cenvkit-publish.sh` (Generic Package Registry: verify `checksums.txt` → upload →
+verify the download). `cenvkit-install-selftest.sh` builds a release-shaped
+archive, serves it over a `file://` mirror and checks that a correct sha256
+installs while a wrong one does not. It runs in CI on every push and needs no
+network.
 
-Seam-проверка: `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...` БЕЗ
-`-deps` (с `-deps` в левой колонке оказываются подпакеты самого compose-go →
-вечный false positive). Исключение — строка ровно `<module>/internal/engine `;
-при утечке `exit 1`. `make seam` — зеркало этой проверки.
+Seam check: `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...` WITHOUT
+`-deps` (with `-deps` the left column also contains compose-go's own subpackages
+→ a permanent false positive). The only exception is a line exactly
+`<module>/internal/engine `; on a leak it `exit 1`. `make seam` mirrors this
+check.
 
-## Ловушки прогона
+## Run traps
 
-- Подпроцесс упал — печатай `CombinedOutput()`: обёрнутая ошибка «exit status 1»
-  прячет настоящую причину (так однажды пропустили падение compose).
-- Правишь тест, который кто-то правит параллельно: перечитай ТЕКУЩИЙ файл и
-  прогони `-count=1`, иначе фиксишь по устаревшему ассерту.
-- Меняется контракт поведения — просматривай ВСЕ `*_test.go`, а не только
-  названный каталог: пакетные тесты часто шире, чем кажется по заданию.
-- Не «зеленей» на `go test` без `gofmt` и без docker-пути: оба промаха уже
-  случались и оба доезжали до CI.
+- A subprocess failed — print `CombinedOutput()`: the wrapped error "exit status 1"
+  hides the real cause (that is how a compose failure was missed once).
+- You are editing a test that someone is editing in parallel: re-read the CURRENT
+  file and run `-count=1`, otherwise you fix against a stale assertion.
+- A behavior contract changes — review ALL `*_test.go`, not just the named
+  directory: package tests are often wider than the task suggests.
+- Do not go "green" on `go test` without `gofmt` and without the docker path:
+  both misses have happened before and both reached CI.

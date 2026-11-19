@@ -1,8 +1,10 @@
+**English** · [Русский](ru/cenvkit.md)
+
 # cenvkit — the Go CLI
 
-`cenvkit` is the implementation of cenvkit: a small Go CLI built on
+`cenvkit` is a small Go CLI built on
 **Docker's own compose loader** (`github.com/compose-spec/compose-go/v2`, pinned
-`v2.11.0`). It assembles `COMPOSE_ENV_FILES` from your **project env chain** and
+`v2.17.0`). It assembles `COMPOSE_ENV_FILES` from your **project env chain** and
 `exec`s `docker compose`, and ships a **daemon-free debugger** that explains where
 every variable comes from — and flags the one place Compose silently bites you.
 
@@ -164,6 +166,12 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
 
 `-e <env>` overrides `CENVKIT_ENV` for one invocation.
 
+**`--env-file <path>`** (repeatable; `env-debug`, `gap-report`, `env`, `run`) layers an
+extra env file **after** the project chain, mirroring `docker compose --env-file`: the
+file takes part in interpolation, so a variable it supplies is not reported as a gap,
+and a missing file is an error (Compose errors too). `cenvkit compose` does not claim
+the flag — it still forwards docker's own `--env-file` untouched.
+
 > **These commands print values verbatim, including secrets.** `env`, `run --print`
 > and `env-debug --value|--trace` are deliberately unredacted (the value *is* the
 > answer), so do not redirect them into shared CI logs, tickets or chat. cenvkit
@@ -175,7 +183,7 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
   var feed `${VAR}` interpolation, put it in the **Layer-1 chain**.
 - **Run path = Layer 1 only.** `COMPOSE_ENV_FILES` (what `env-files`/`compose`
   set) never contains a service `env_file:` path.
-- **Missing `env_file:` (D1).** A missing *required* `env_file:` is lenient at
+- **Missing `env_file:`.** A missing *required* `env_file:` is lenient at
   enumeration (so `env-debug` never aborts) and **upstream-fatal at the real
   `docker compose` run** (which re-enforces `required:`). cenvkit does not
   reimplement upstream's `required:` semantics.
@@ -190,11 +198,11 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
 - **`COMPOSE_DEPTH`** is accepted-but-ignored (the `include:` graph makes
   depth-bounded glob discovery obsolete). **No over-discovery** — a compose file
   not in the `include:` graph / `COMPOSE_FILE` is not loaded; `.git` is irrelevant.
-- **`docker compose --env-file` is not modelled.** cenvkit reasons about
-  `COMPOSE_ENV_FILES`, `COMPOSE_FILE` and the project chain; a file passed to
-  docker via `--env-file` is unknown to `env-debug`/`gap-report` (compose-go will
-  warn that those variables are unset). List that file in `.cenvkit.envchain` if
-  the diagnostics must see it; `cenvkit compose` still forwards the flag.
+- **`docker compose --env-file` is modelled on request.** cenvkit reasons about
+  `COMPOSE_ENV_FILES`, `COMPOSE_FILE` and the project chain; a file passed to docker
+  via `--env-file` is unknown to the diagnostics **unless** the same path is given
+  to `cenvkit … --env-file` (or listed in `.cenvkit.envchain`). `cenvkit compose`
+  forwards docker's own flag untouched.
 
 ## Configuration
 

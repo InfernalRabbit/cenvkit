@@ -1,3 +1,5 @@
+**English** · [Русский](README.ru.md)
+
 # cenvkit
 
 A small **Go CLI** (`cenvkit`) built on Docker's own `compose-go` loader. It does
@@ -21,12 +23,13 @@ Python, no Node).
 
 ---
 
-## Install — cenvkit (the Go CLI, v1 · current)
+## Install — the Go CLI
 
 `cenvkit` is built on Docker's own loader (`compose-spec/compose-go`, pinned
-v2.11.0). `env-debug`/`gap-report` are daemon-free; `cenvkit compose`/`validate`
+v2.17.0). `env-debug`/`gap-report` are daemon-free; `cenvkit compose`/`validate`
 shell out to your **Docker Compose v2.24+** (for `include:` + `env_file:
-required:`) and are tested in CI against the latest release. Two distribution modes:
+required:`) and are tested in CI against a **pinned** Compose release (a separate,
+non-blocking job reports drift against upstream latest). Two distribution modes:
 
 ```sh
 # Installed (recommended)
@@ -109,6 +112,10 @@ eval "$(cenvkit env --format shell)"   # load it into the current shell
 (and to `env-debug --effective`). `-e <env>` overrides `CENVKIT_ENV` for one call;
 shell-set vars win over the chain (compose parity).
 
+If a wrapper calls `docker compose --env-file <path>`, pass the same path as
+`cenvkit … --env-file <path>` (or list it in `.cenvkit.envchain`) so the debug and
+gap views see the values the run actually interpolates.
+
 > ⚠️ `env`, `run --print` and `env-debug --value|--trace` print values **verbatim,
 > including secrets**. That is the point — but don't pipe them into shared logs.
 
@@ -161,7 +168,7 @@ standalone — no inheritance from the default):
 ```
 .secrets.env
 .env
-.${D}{HOSTNAME}.env
+.${HOSTNAME}.env
 
 [ci]
 .env
@@ -193,7 +200,7 @@ cenvkit compose up                     # sets COMPOSE_ENV_FILES, execs docker co
 ```
 
 Two things to carry over: put the machine override in the chain as
-`.${D}{HOSTNAME}.env`, and if any consumer still passes `--env-file` explicitly,
+`.${HOSTNAME}.env`, and if any consumer still passes `--env-file` explicitly,
 list that file in `.cenvkit.envchain` — cenvkit models `COMPOSE_ENV_FILES` and
 `COMPOSE_FILE`, not arbitrary docker CLI flags.
 
@@ -280,7 +287,7 @@ cenvkit/
 │   ├── provenance/      # env-debug provenance model + human/JSON render
 │   └── bootstrap/       # cenvkit init
 ├── cenvkit              # POSIX shim (temp build in its module; preserves caller cwd)
-├── go.mod / go.sum      # module + compose-go v2.11.0 pin
+├── go.mod / go.sum      # module + compose-go v2.17.0 pin
 ├── examples/monorepo/   # runnable root-include:s-subprojects blueprint (cenvkit-driven)
 ├── test/                # acceptance suite driving the cenvkit binary
 └── docs/cenvkit.md      # the canonical command + behavior reference

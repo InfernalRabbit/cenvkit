@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User guide
+    url: https://github.com/InfernalRabbit/cenvkit/blob/main/docs/guide.md
+    about: Installation, the env chain, commands, monorepos, CI, and troubleshooting.
+  - name: Command reference
+    url: https://github.com/InfernalRabbit/cenvkit/blob/main/docs/cenvkit.md
+    about: Commands, flags, exit codes, and behavior contracts at a glance.
+  - name: Security policy
+    url: https://github.com/InfernalRabbit/cenvkit/blob/main/SECURITY.md
+    about: Supported versions and the private vulnerability reporting process. Never report a vulnerability in a public issue.

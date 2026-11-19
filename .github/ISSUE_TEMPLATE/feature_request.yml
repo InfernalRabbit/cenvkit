@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a new capability or an improvement to cenvkit
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please search existing issues and read the
+        [command reference](https://github.com/InfernalRabbit/cenvkit/blob/main/docs/cenvkit.md)
+        first.
+
+        cenvkit is deliberately small and upstream-first. Secret management,
+        masking, and encryption are out of scope — see the
+        [user guide](https://github.com/InfernalRabbit/cenvkit/blob/main/docs/guide.md).
+  - type: textarea
+    id: task
+    attributes:
+      label: Task or problem
+      description: "What are you trying to accomplish? Describe the problem, not only the proposed solution."
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: "A concrete workflow: which command you run, what your env chain and compose files look like, and which consumer is involved (compose, run, env, CI). Use dummy values."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: "Optional: the flag, command, or output you would like to see. If it changes the CLI surface, sketch the invocation."
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: "Workarounds you tried (native Compose flags, another tool, a wrapper) and why they are not enough."
+    validations:
+      required: true
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Area
+      description: "Optional: which part of cenvkit this touches."
+      options:
+        - label: "CLI commands and flags"
+        - label: "Env chain and selector"
+        - label: "env-debug / gap-report"
+        - label: "compose / validate wrapper"
+        - label: "Documentation"
+        - label: "CI, install, or release tooling"
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Pull request readiness
+      description: "Optional — this is not a commitment."
+      options:
+        - label: "I am willing to open a PR for this feature."
+        - label: "I could contribute with guidance on where to start."
+        - label: "I am suggesting an idea only; I cannot open a PR."
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: "I searched existing issues and the documentation."
+          required: true
+        - label: "This is a feature request, not a bug report or a security report."
+          required: true

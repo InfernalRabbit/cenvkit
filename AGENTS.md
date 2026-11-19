@@ -2,7 +2,7 @@
 
 ## Development and verification
 
-- Use the Go version in `go.mod` (currently 1.26.3). Run local source with
+- Use the Go version in `go.mod` (currently 1.26.11). Run local source with
   `go run ./cmd/cenvkit <args>`; `make dev-build` produces `.cenvkit.bin`.
   The tracked root `cenvkit` is a POSIX-sh launcher: never overwrite it with a binary.
 - `make ci` runs vet, formatting, import-seam, build, and tests; lint runs only

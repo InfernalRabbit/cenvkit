@@ -1,3 +1,5 @@
+**English** · [Русский](../ru/integrations/gitlab-offline.md)
+
 # Offline / mirrored CI (GitLab shown)
 
 Use this when runners cannot reach GitHub Releases and the Go module proxy, but
@@ -17,7 +19,7 @@ Anything below works with any artifact store that serves
 For GitLab the base is:
 
 ```
-${D}{CI_API_V4_URL}/projects/${D}{CI_PROJECT_ID}/packages/generic/cenvkit
+${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cenvkit
 ```
 
 so `0.6.2` on Linux amd64 lands at
@@ -36,7 +38,7 @@ cenvkit:publish:
   stage: deploy
   image: alpine:3.20
   rules:
-    - if: '${D}CENVKIT_PUBLISH'
+    - if: '$CENVKIT_PUBLISH'
       when: manual
   variables:
     CENVKIT_VERSION: "0.6.2"
@@ -47,14 +49,14 @@ cenvkit:publish:
       set -e
       mkdir -p dist && cd dist
       for f in checksums.txt \
-               cenvkit_${D}{CENVKIT_VERSION}_linux_amd64.tar.gz \
-               cenvkit_${D}{CENVKIT_VERSION}_linux_arm64.tar.gz \
-               cenvkit_${D}{CENVKIT_VERSION}_darwin_amd64.tar.gz \
-               cenvkit_${D}{CENVKIT_VERSION}_darwin_arm64.tar.gz \
-               cenvkit_${D}{CENVKIT_VERSION}_windows_amd64.zip \
-               cenvkit_${D}{CENVKIT_VERSION}_windows_arm64.zip ; do
+               cenvkit_${CENVKIT_VERSION}_linux_amd64.tar.gz \
+               cenvkit_${CENVKIT_VERSION}_linux_arm64.tar.gz \
+               cenvkit_${CENVKIT_VERSION}_darwin_amd64.tar.gz \
+               cenvkit_${CENVKIT_VERSION}_darwin_arm64.tar.gz \
+               cenvkit_${CENVKIT_VERSION}_windows_amd64.zip \
+               cenvkit_${CENVKIT_VERSION}_windows_arm64.zip ; do
         curl -fsSL -o "$f" \
-          "https://github.com/InfernalRabbit/cenvkit/releases/download/v${D}{CENVKIT_VERSION}/$f"
+          "https://github.com/InfernalRabbit/cenvkit/releases/download/v${CENVKIT_VERSION}/$f"
       done
     - cd ..
     - CENVKIT_API_TOKEN="JOB-TOKEN: $CI_JOB_TOKEN" sh scripts/ci/cenvkit-publish.sh dist
@@ -80,7 +82,7 @@ env-lint:
   before_script:
     - apk add --no-cache curl tar unzip >/dev/null
   script:
-    - export CENVKIT_MIRROR="${D}{CI_API_V4_URL}/projects/${D}{CI_PROJECT_ID}/packages/generic/cenvkit"
+    - export CENVKIT_MIRROR="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cenvkit"
     - export CENVKIT_MIRROR_AUTH="JOB-TOKEN: $CI_JOB_TOKEN"
     - |
       case "$(uname -m)" in

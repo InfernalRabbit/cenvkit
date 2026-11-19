@@ -83,11 +83,13 @@ func shellQuote(v string) string {
 
 // dotenvQuote double-quotes v and escapes the characters compose-go's dotenv
 // parser treats specially inside a double-quoted value, so the output round-trips
-// that parser back to the original value (probe-verified, v2.11.0):
+// that parser back to the original value (probe-verified, v2.17.0):
 //   - backslash  → \\   (escapes are processed in "...")
 //   - "          → \"   (terminates the quoted value otherwise)
 //   - $          → \$   (compose-go expands ${VAR}/$VAR inside "..."; \$ is literal)
 //   - newline    → \n   (a raw newline would split the line)
+//   - carriage return -> \r (compose-go decodes \r to CR; a raw CR would split
+//     a line for line-oriented consumers or be normalized to LF by them)
 //
 // Always double-quoting (even plain values) keeps the encoder simple and the
 // output unambiguous; the parser strips the quotes on read.
@@ -97,6 +99,7 @@ func dotenvQuote(v string) string {
 		`"`, `\"`,
 		`$`, `\$`,
 		"\n", `\n`,
+		"\r", `\r`,
 	)
 	return `"` + r.Replace(v) + `"`
 }

@@ -1,3 +1,5 @@
+**English** · [Русский](ru/guide.md)
+
 # cenvkit — User Guide
 
 A complete, end-to-end guide to `cenvkit`: what it does, how to install it, how to
@@ -507,6 +509,9 @@ cenvkit's own CI (a good template) runs, on every push/PR:
 
 ```yaml
 # .github/workflows/ci.yml (essentials)
+env:
+  GO_VERSION: "1.26.11"        # exactly the version in go.mod
+  COMPOSE_VERSION: "v5.8.0"    # pinned; bump version + sha256 in one commit
 jobs:
   lint:
     steps:
@@ -517,19 +522,30 @@ jobs:
           go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... \
             | grep -v "^$MOD/internal/engine " | grep 'compose-spec/compose-go' \
             && { echo "compose-go leaked"; exit 1; } || echo "seam OK"
-      - uses: golangci/golangci-lint-action@v6
+      - run: |                                   # linter built with the project's Go
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+      - run: |                                   # shipped shell: syntax + installer self-test
+          for f in cenvkit scripts/ci/*.sh; do sh -n "$f"; done
+          sh scripts/ci/cenvkit-install-selftest.sh
   test:
     strategy: { matrix: { os: [ubuntu-latest, macos-latest] } }
     steps:
       - run: go build ./...
-      - run: go test ./...
+      - run: go test ./... -count=1
   acceptance:
     steps:
+      - run: |                                   # pinned Compose, checksum verified before use
+          curl -fsSL "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64" -o /tmp/dc
+          echo "<sha256 of that asset>" | sha256sum -c -
+          install -m 0755 /tmp/dc ~/.docker/cli-plugins/docker-compose
       - run: docker compose version
-      - run: go test ./test/... -v            # docker-gated acceptance
-      - env: { SMOKE_SKIP_DOCKER: "1" }        # and a no-docker job
-        run: go test ./test/... -v
+      - run: go test ./test/... -v -count=1       # docker-gated acceptance
 ```
+
+The real workflow additionally runs `goreleaser check` and a `release-snapshot` dry
+run (all six targets built before anything is tagged), plus a non-blocking job that
+runs the same acceptance against upstream-latest Compose to report drift.
 
 In your own project, the useful gate is `cenvkit validate` (or `validate --all`).
 Because `env-debug` is daemon-free, you can also assert specific resolutions — and
@@ -553,7 +569,7 @@ cenvkit env-debug --trace --var APP_PORT --json | grep -q '"gap": *true' \
 - **Run path = Layer 1 only.** `cenvkit env-files` / `cenvkit compose` set
   `COMPOSE_ENV_FILES` to the Layer-1 chain only; no service `env_file:` path is
   ever included.
-- **Missing `env_file:` (D1).** A missing *required* `env_file:` is lenient at
+- **Missing `env_file:`.** A missing *required* `env_file:` is lenient at
   enumeration (so `env-debug` never aborts) and **upstream-fatal at the real
   `docker compose` run** (which re-enforces `required:`). cenvkit never reimplements
   upstream's `required:` semantics.
@@ -609,7 +625,7 @@ Those commands need `docker compose`. `env-debug` does not — use it for inspec
 without Docker.
 
 **`required` env_file error at `cenvkit compose up`, but `env-files` was fine.**
-That's D1 by design: enumeration is lenient (skips a missing file) but the real
+That's by design: enumeration is lenient (skips a missing file) but the real
 `docker compose` run enforces `required:`. Create the file or set `required: false`.
 
 **`cenvkit init` didn't overwrite my `.env`.**
