@@ -484,6 +484,7 @@ var debugViewOrder = []provenance.View{
 	provenance.ViewOverview,
 	provenance.ViewEffective,
 	provenance.ViewTrace,
+	provenance.ViewDeps,
 }
 
 // parseDebugView maps a --show value onto a View.
@@ -521,6 +522,7 @@ type debugRequest struct {
 	redact     bool
 	value      bool
 	wantLayers bool
+	wantDeps   bool
 }
 
 // buildDebugRequest merges --show with the deprecated single-view flags, applies
@@ -574,6 +576,9 @@ func buildDebugRequest(shows []string, varName, service string, jsonOut, redact 
 	if hasView(req.views, provenance.ViewTrace) && varName == "" {
 		return req, &exitError{code: 2, msg: "--show trace requires --var"}
 	}
+	if hasView(req.views, provenance.ViewDeps) && varName == "" {
+		return req, &exitError{code: 2, msg: "--show deps requires --var"}
+	}
 	// Defaults: only for the human path. JSON without --show keeps the historical
 	// whole-report document (backwards compatible), narrowed by the filters.
 	if !jsonOut && len(req.views) == 0 {
@@ -602,7 +607,8 @@ func buildDebugRequest(shows []string, varName, service string, jsonOut, redact 
 	// lists (human or JSON).
 	needsLayersForFiles := varName != "" &&
 		(hasView(req.views, provenance.ViewList) || hasView(req.views, provenance.ViewFiles) || jsonOut)
-	req.wantLayers = hasView(req.views, provenance.ViewOverview) || needsLayersForFiles
+	req.wantDeps = hasView(req.views, provenance.ViewDeps)
+	req.wantLayers = hasView(req.views, provenance.ViewOverview) || needsLayersForFiles || req.wantDeps
 	return req, nil
 }
 
@@ -717,7 +723,7 @@ func newEnvDebugCmd() *cobra.Command {
 			}
 			rep, err := engine.New().Provenance(cmd.Context(), engine.ProvInput{
 				ProjectDir: dir, Env: withComposeEnv(os.Environ(), cr.ComposeEnv), EnvFiles: pf,
-				WantLayers: req.wantLayers,
+				WantLayers: req.wantLayers, WantDeps: req.wantDeps,
 			})
 			if err != nil {
 				return err
@@ -740,10 +746,11 @@ func newEnvDebugCmd() *cobra.Command {
 				return provenance.RenderJSONOpts(out, rep, provenance.JSONOpts{
 					Service: req.service, Var: req.varName, Views: req.views, Redact: req.redact,
 					DropLayers: !hasView(req.views, provenance.ViewOverview),
+					Deps:       req.wantDeps,
 				})
 			}
 			opts := provenance.HumanOpts{
-				Views: req.views, Service: req.service, FilterVar: req.varName,
+				Views: req.views, Service: req.service, FilterVar: req.varName, Deps: req.wantDeps,
 				Redact:           req.redact,
 				ComposeEnv:       cr.ComposeEnv,
 				ComposeEnvSource: cr.ComposeEnvSource,

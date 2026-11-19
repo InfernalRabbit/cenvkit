@@ -6,6 +6,19 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-19
+
+### Added
+
+- **`--show deps --var X`** — the dependency closure: where `X` is defined (chain
+  files and service `env_file:`), what `X`'s own value needs (transitive forward
+  references), which keys reference `X` (transitive reverse references) and which
+  services receive it. `--json --show deps` emits a `deps` section; the view
+  requires `--var` and is not narrowed by `--service`.
+- The engine now captures interpolation edges (`Report.Refs`) from every raw layer
+  value: `${VAR}`, `${VAR:-def}`, `$VAR`, nested defaults (`${A:-${B}}`) and
+  `$$` escapes. An unterminated reference stays literal, so no edge is invented.
+
 ## [0.8.1] — 2026-11-19
 
 ### Fixed

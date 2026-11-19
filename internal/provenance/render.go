@@ -173,6 +173,7 @@ type HumanOpts struct {
 	FilterVar string // filter Effective to one KEY (the --var value)
 	Views     []View // explicit cascade order (--show); empty => derive from the legacy bools
 	Redact    bool   // mask values as <redacted>
+	Deps      bool   // render the dependency closure of FilterVar (--show deps)
 	Chain     bool   // Layer-1-only list (default view) — renders Report.ChainFiles
 	Files     bool   // two-group view: interpolation (Report.Files) + runtime-only (Report.Services)
 	Value     string // non-empty: print the winning value only
@@ -194,6 +195,7 @@ type JSONOpts struct {
 	Views      []View // non-empty: keep only the sections the requested views need
 	Redact     bool   // mask every value as <redacted>
 	DropLayers bool   // the raw layer dump was built only to filter; do not emit it
+	Deps       bool   // emit the dependency closure of Var as the deps section
 }
 
 // RenderJSON writes the whole Report as indented JSON.
@@ -244,14 +246,17 @@ func RenderJSONOpts(w io.Writer, r Report, o JSONOpts) error {
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	if o.DropLayers {
-		// The layer dump was built only so the --var filter could answer "where";
-		// it is internal to --show overview and must not leak into other views.
-		r.Layers = nil
-	}
 	if len(o.Views) == 0 {
+		if o.DropLayers {
+			// The layer dump was built only so the --var filter could answer "where";
+			// it is internal to --show overview and must not leak into the document.
+			r.Layers = nil
+		}
 		return enc.Encode(r)
 	}
+	// Section-selective path: BuildDeps still needs the layers, so drop them only
+	// when they are not an explicitly requested section (the doc never includes
+	// unrequested sections anyway).
 	doc := jsonDoc{}
 	for _, v := range o.Views {
 		switch v {
@@ -265,6 +270,9 @@ func RenderJSONOpts(w io.Writer, r Report, o JSONOpts) error {
 			doc.Services = &r.Services
 		case ViewOverview:
 			doc.Layers = &r.Layers
+		case ViewDeps:
+			d := BuildDeps(r, o.Var)
+			doc.Deps = &d
 		}
 	}
 	return enc.Encode(doc)
@@ -279,6 +287,7 @@ type jsonDoc struct {
 	Vars       *map[string]VarTrace `json:"vars,omitempty"`
 	Services   *[]ServiceEnv        `json:"services,omitempty"`
 	Layers     *[]OverviewLayer     `json:"layers,omitempty"`
+	Deps       *DepReport           `json:"deps,omitempty"`
 }
 
 // redactReport returns a copy of r with every rendered value masked. Structure,
@@ -335,6 +344,7 @@ const (
 	ViewOverview  View = "overview"
 	ViewEffective View = "effective"
 	ViewTrace     View = "trace"
+	ViewDeps      View = "deps"
 )
 
 // ActiveViews returns the requested stages in cascade order.
@@ -357,6 +367,9 @@ func (o HumanOpts) ActiveViews() []View {
 	}
 	if o.Trace != "" {
 		views = append(views, ViewTrace)
+	}
+	if o.Deps {
+		views = append(views, ViewDeps)
 	}
 	return views
 }
@@ -396,6 +409,8 @@ func RenderHuman(w io.Writer, r Report, o HumanOpts) {
 			renderEffective(w, r, o.Service, o.FilterVar, s)
 		case ViewTrace:
 			renderTrace(w, r, o.Trace, o.Service, o.Redact, s)
+		case ViewDeps:
+			renderDeps(w, r, o, s)
 		}
 	}
 }
@@ -816,6 +831,58 @@ func stripVarPrefix(name, resolved string) string {
 		return resolved[len(p):]
 	}
 	return resolved
+}
+
+// renderDeps prints the dependency closure of the --var key: where it is defined,
+// what it needs (transitive forward refs), who needs it (transitive reverse refs)
+// and which services receive it.
+func renderDeps(w io.Writer, r Report, o HumanOpts, s Styler) {
+	d := BuildDeps(r, o.FilterVar)
+	_, _ = fmt.Fprintln(w, s.Key(d.Root))
+	if len(d.Definitions) == 0 {
+		_, _ = fmt.Fprintf(w, "  defined in:    %s\n", s.Hint("(nowhere in the loaded model)"))
+	} else {
+		_, _ = fmt.Fprintln(w, "  defined in:")
+		for _, def := range d.Definitions {
+			label := def.Layer
+			if def.Service != "" {
+				label += ", service " + def.Service
+			}
+			_, _ = fmt.Fprintf(w, "    %s (%s)\n", s.Path(def.File), s.SourceLabel(label))
+		}
+	}
+	if len(d.DependsOn) == 0 {
+		_, _ = fmt.Fprintln(w, "  depends on:    - (the value has no references)")
+	} else {
+		_, _ = fmt.Fprintln(w, "  depends on:")
+		for _, e := range d.DependsOn {
+			_, _ = fmt.Fprintf(w, "    %s (depth %d, via %s)\n", s.Key(e.Var), e.Depth, Sanitize(e.Via))
+		}
+	}
+	if len(d.NeededBy) == 0 {
+		_, _ = fmt.Fprintln(w, "  needed by:     - (nothing references it)")
+	} else {
+		_, _ = fmt.Fprintln(w, "  needed by:")
+		for _, e := range d.NeededBy {
+			svc := ""
+			if e.Service != "" {
+				svc = ", service " + e.Service
+			}
+			_, _ = fmt.Fprintf(w, "    %s:%s (depth %d%s)\n", s.Path(e.File), s.Key(e.Key), e.Depth, Sanitize(svc))
+		}
+	}
+	if len(d.Consumers) == 0 {
+		_, _ = fmt.Fprintln(w, "  consumed by:   - (no service receives it)")
+	} else {
+		_, _ = fmt.Fprintln(w, "  consumed by:")
+		for _, c := range d.Consumers {
+			if c.Kind == "env_file" {
+				_, _ = fmt.Fprintf(w, "    service %s via %s\n", s.Service(c.Service), s.Path(c.File))
+			} else {
+				_, _ = fmt.Fprintf(w, "    service %s field %s (YAML interpolation)\n", s.Service(c.Service), Sanitize(c.Field))
+			}
+		}
+	}
 }
 
 // renderEffective prints each service's effective env. Entries are pre-sorted by

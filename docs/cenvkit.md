@@ -126,6 +126,7 @@ impossible combination exits 2 with a message naming what is missing.
 | `overview` | per-file layering: `+` new / `~` override (`old -> new`) / `·` repeat, raw values, `⚠ gap:` lines |
 | `effective` | each service final container env with the source of every value |
 | `trace` | one variable story (requires `--var`) |
+| `deps` | dependency closure of `--var`: definitions, what it needs, who needs it, who consumes it |
 
 `--value --var V` is not a view: it prints the bare interpolation value and cannot
 be combined with anything else.
@@ -144,6 +145,11 @@ while `--json --show …` emits only the requested sections.
 Conflicts (exit 2, never a silent fallback): `--value` with any other view or with
 `--json`; `--trace` / `--show trace` without `--var`; `--service` with a view set
 that carries no per-service data.
+
+`--show deps --var X` answers the reverse question that a filter cannot: where X is
+defined (chain files and service `env_file:`), what X's own value needs (transitive
+forward references), which keys reference X (transitive reverse references) and which
+services receive it. It is the graph lens; `--service` does not narrow it.
 
 A filter that matches nothing in a **view** exits **1** with a message on stderr and
 empty stdout — a typo must not read as success in CI. Queries are exempt: `--value`
