@@ -164,7 +164,10 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
 
 `-e <env>` overrides `CENVKIT_ENV` for one invocation.
 
-## Behavior contracts (what to rely on)
+> **These commands print values verbatim, including secrets.** `env`, `run --print`
+> and `env-debug --value|--trace` are deliberately unredacted (the value *is* the
+> answer), so do not redirect them into shared CI logs, tickets or chat. cenvkit
+> does not manage, mask or encrypt secrets — see the note in Configuration.
 
 - **`env_file:` is runtime-only.** A `${VAR}` defined *only* in a service
   `env_file:` is **not** resolved at the run — `docker compose` interpolates the
@@ -192,6 +195,12 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
 
 - `.cenvkit.envchain` — the Layer-1 chain (one path template per line; `#`
   comments and blank lines ignored). May carry optional **`[name]` sections**.
+  Treat it as **trusted project config**, like a `Makefile`: entries may be
+  absolute or leave the project directory (`../shared.env`), and nothing constrains
+  them to the project root — the same latitude Compose gives `env_file:`. Running
+  cenvkit on a clone you have not reviewed therefore lets that file read paths on
+  your machine (their values are printed by `env`). Review it first, or pin
+  `--project-dir` at a tree you control.
 - **Named chains** — `--chain <name>` selects a `[name]` section (default = the
   header-less / `[default]` list). Standalone (no inheritance), orthogonal to
   `CENVKIT_ENV`; an unknown name exits 2 listing the available ones.

@@ -53,8 +53,11 @@ type Result struct {
 var defaultChain = []string{".env", ".${CENVKIT_ENV}.env", ".secrets.env"}
 
 // sanitizeToken keeps only [A-Za-z0-9._-]; everything else is dropped. This kills
-// the legacy sed-injection class and prevents a "," (the COMPOSE_ENV_FILES
-// separator) or path-traversal char from entering a resolved path (audit W1).
+// the legacy sed-injection class and stops an expanded TOKEN from smuggling a ","
+// (the COMPOSE_ENV_FILES separator) or a path-traversal character into a resolved
+// path (audit W1). It does NOT constrain literal text in the chain file itself:
+// a literal "../x" or "/abs/path" entry is honored as-is, because .cenvkit.envchain
+// is trusted project config (documented in docs/cenvkit.md).
 func sanitizeToken(s string) string {
 	s = strings.TrimSpace(s)
 	var b strings.Builder

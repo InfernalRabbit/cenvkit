@@ -2,7 +2,8 @@ name: Release
 
 # Build + publish cross-OS binaries (linux/darwin/windows × amd64/arm64) when a
 # vX.Y.Z tag is pushed. The .goreleaser.yaml build matrix is validated on every
-# CI run (`goreleaser check`); this workflow runs the ACTUAL release on a tag.
+# CI run (`goreleaser check` + the `release-snapshot` dry run of the full
+# pipeline); this workflow runs the ACTUAL release on a tag.
 
 on:
   push:
@@ -12,10 +13,17 @@ on:
 permissions:
   contents: write # create the GitHub Release + upload the archives/checksums
 
+# One release at a time, never cancelled: a half-published Release (some assets
+# uploaded, some not) is worse than a queued run.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     name: goreleaser release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:

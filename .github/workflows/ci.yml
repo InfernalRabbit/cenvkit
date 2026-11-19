@@ -10,11 +10,23 @@ permissions:
 
 env:
   GO_VERSION: "1.26"
+  # Docker Compose used by the docker acceptance gate — PINNED, not "latest".
+  # Bump COMPOSE_VERSION and COMPOSE_SHA256_LINUX_X86_64 together, in a dedicated
+  # commit, only after the acceptance suite passes against the new release.
+  COMPOSE_VERSION: "v5.8.0"
+  COMPOSE_SHA256_LINUX_X86_64: "b8840f5008c447f41fce0a57ae3adeab42c89b1eb6e6012524bcabbfb4ffbaf6"
+
+# Supersede in-flight runs for the same ref (branch push / PR); a tag push has
+# its own push ref, so CI for a tag is never cancelled by branch activity.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: vet / gofmt / golangci-lint / seam
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -65,6 +77,7 @@ jobs:
   goreleaser-check:
     name: goreleaser check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -77,6 +90,30 @@ jobs:
           version: "~> v2"
           args: check
 
+  release-snapshot:
+    name: goreleaser snapshot (all targets build pre-tag)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # changelog needs the full history + tags
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # Cut the actual release pipeline BEFORE the tag exists: builds every
+      # goos/goarch (linux/darwin/windows x amd64/arm64), assembles the archives
+      # (with their LICENSE/README/CHANGELOG/NOTICES files), checksums and the
+      # changelog — then stops without publishing. `goreleaser build` takes no
+      # `--skip=publish` flag in v2 (it never publishes), so a snapshot
+      # `release` is the supported dry run and also exercises the archive config.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+
   test:
     name: unit tests (${{ matrix.os }})
     strategy:
@@ -84,6 +121,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -95,42 +133,85 @@ jobs:
       - name: go test
         # The unit job is docker-free on purpose (it runs on macOS too, which has
         # no docker daemon); the acceptance-docker job covers the docker path.
+        # `./...` also includes ./test, so this step IS the no-docker acceptance
+        # run (docker-gated assertions skip themselves) — the coverage the former
+        # standalone `acceptance-no-docker` job provided.
+        # -count=1 disables the go test result cache: `cache: true` restores
+        # GOCACHE/GOMODCACHE across runs, and a cached "ok" must never stand in
+        # for actually executing the suite.
         env:
           SMOKE_SKIP_DOCKER: "1"
-        run: go test ./...
+        run: go test ./... -count=1
 
   acceptance-docker:
-    name: acceptance (docker)
+    name: acceptance (docker, pinned compose)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      # ubuntu-latest ships an OLD bundled compose plugin (v2.38.2). Install the
-      # latest release so CI tracks current Docker Compose, not the runner's pin.
-      - name: Install latest Docker Compose
+      # Pinned on purpose (two reasons):
+      #   * reproducibility — a "releases/latest" URL makes the gate depend on
+      #     whatever Compose shipped that day, so a green run stops meaning
+      #     anything about a specific Compose version;
+      #   * supply chain — the binary is fetched from the network and executed
+      #     under the runner; the sha256 below must match before it is installed.
+      # Bump deliberately: change the version + checksum in the env block above,
+      # in one commit, after checking the new release notes and a local run.
+      # Drift against the newest upstream release is still observed — but
+      # non-blocking — by the `compose-latest` job below.
+      - name: Install pinned Docker Compose (${{ env.COMPOSE_VERSION }} + sha256)
+        run: |
+          set -euo pipefail
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::The pinned checksum covers docker-compose-linux-x86_64 only; add an arm64 pin before moving this job to $(uname -m) runners."
+            exit 1
+          fi
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL \
+            "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+            -o /tmp/docker-compose
+          echo "${COMPOSE_SHA256_LINUX_X86_64}  /tmp/docker-compose" | sha256sum -c -
+          chmod +x /tmp/docker-compose
+          mv /tmp/docker-compose ~/.docker/cli-plugins/docker-compose
+      - name: docker compose version matches the pin
+        run: |
+          docker compose version
+          got="$(docker compose version --short)"
+          got="${got#v}"
+          if [ "$got" != "${COMPOSE_VERSION#v}" ]; then
+            echo "::error::Installed Docker Compose is $got, expected ${COMPOSE_VERSION#v} — update COMPOSE_SHA256_* with COMPOSE_VERSION."
+            exit 1
+          fi
+      - name: acceptance suite (docker)
+        run: go test ./test/... -v -count=1
+
+  # Kept as a NON-BLOCKING drift detector: the pinned gate above decides whether
+  # a change is good; this job only reports when upstream Docker Compose has moved
+  # on. It intentionally downloads `latest` without a checksum (a pin here would
+  # defeat the purpose) and must never fail the workflow — hence
+  # continue-on-error, which is why it is a separate job rather than a step.
+  compose-latest:
+    name: acceptance vs latest Docker Compose (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install latest Docker Compose (drift signal, unverified by design)
         run: |
           mkdir -p ~/.docker/cli-plugins
-          curl -fSL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)" \
+          curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
             -o ~/.docker/cli-plugins/docker-compose
           chmod +x ~/.docker/cli-plugins/docker-compose
-      - name: docker compose version
+      - name: docker compose version (upstream latest)
         run: docker compose version
-      - name: acceptance suite (docker)
-        run: go test ./test/... -v
-
-  acceptance-no-docker:
-    name: acceptance (no docker)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - name: acceptance suite (docker-dependent assertions skipped)
-        env:
-          SMOKE_SKIP_DOCKER: "1"
-        run: go test ./test/... -v
+      - name: acceptance suite (docker) against latest Compose
+        run: go test ./test/... -count=1

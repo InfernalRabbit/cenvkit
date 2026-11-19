@@ -326,9 +326,9 @@ func newComposeCmd() *cobra.Command {
 			dc.Dir = dir // the project dir the chain resolved in
 			dc.Env = composeEnvironment(merged, cr.ComposeEnv)
 			dc.Stdin, dc.Stdout, dc.Stderr = os.Stdin, os.Stdout, os.Stderr
-			if err := dc.Run(); err != nil {
-				if ee, ok := err.(*exec.ExitError); ok {
-					os.Exit(ee.ExitCode())
+			if err := startAndWait(dc); err != nil {
+				if ee := asExitError(err); ee != nil {
+					return childExitError(ee)
 				}
 				return fmt.Errorf("exec docker compose: %w", err)
 			}
@@ -391,8 +391,13 @@ func newValidateCmd() *cobra.Command {
 				dc.Dir = dir
 				dc.Env = composeEnvironment(merged, cr.ComposeEnv, ov...)
 				dc.Stdout, dc.Stderr = os.Stdout, os.Stderr
-				if err := dc.Run(); err != nil {
-					return err // exit code preserved; main prints the error red
+				if err := startAndWait(dc); err != nil {
+					if ee := asExitError(err); ee != nil {
+						// Propagate docker's status (e.g. exit 1 for an invalid config)
+						// instead of collapsing every failure to cenvkit's generic 1.
+						return &exitError{code: childExitCode(ee), msg: "config invalid: docker compose config failed"}
+					}
+					return err
 				}
 				label := "config valid"
 				if env != "" {
@@ -402,10 +407,15 @@ func newValidateCmd() *cobra.Command {
 				return nil
 			}
 			if all {
+				// Annotate BOTH tiers the same way so the messages stay consistent
+				// (dev used to carry context while prod was raw).
 				if err := run("dev"); err != nil {
-					return fmt.Errorf("dev config invalid: %w", err)
+					return annotateErr(err, "dev ")
 				}
-				return run("prod")
+				if err := run("prod"); err != nil {
+					return annotateErr(err, "prod ")
+				}
+				return nil
 			}
 			return run("")
 		},
@@ -669,21 +679,32 @@ func execChild(args []string, env map[string]string) error {
 	c.Env = mapToEnvSlice(env)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 
-	// Forward terminating signals to the child so Ctrl-C etc. reaches it; the
-	// child's own signal-terminated status then drives our 128+signo exit below.
-	// Scoped to the real terminating set (NOT a bare Notify) so we don't relay
-	// runtime-internal signals like SIGURG/SIGCHLD that Go uses.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
-	defer signal.Stop(sigCh)
-
-	if err := c.Start(); err != nil {
+	if err := startAndWait(c); err != nil {
+		if ee := asExitError(err); ee != nil {
+			return childExitError(ee) // child exited non-zero / was signalled
+		}
 		// Start failed after LookPath succeeded (rare: file changed under us).
 		if errors.Is(err, os.ErrPermission) {
 			return &exitError{code: 126, msg: bin + ": permission denied"}
 		}
 		return &exitError{code: 127, msg: bin + ": " + err.Error()}
 	}
+	return nil // child exited 0
+}
+
+// startAndWait starts c and waits for it, relaying the terminating signals to the
+// child meanwhile. A bare Run would leave the child (e.g. `docker compose`, which
+// pulls containers) orphaned when cenvkit itself is signalled by a supervisor or a
+// CI timeout.
+func startAndWait(c *exec.Cmd) error {
+	if err := c.Start(); err != nil {
+		return err
+	}
+	// Scoped to the real terminating set (NOT a bare Notify) so we don't relay
+	// runtime-internal signals like SIGURG/SIGCHLD that Go uses.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	defer signal.Stop(sigCh)
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -696,19 +717,44 @@ func execChild(args []string, env map[string]string) error {
 			}
 		}
 	}()
+	return c.Wait()
+}
 
-	err = c.Wait()
-	if err == nil {
-		return nil // child exited 0
-	}
+// asExitError returns err as an *exec.ExitError, or nil when it is not one.
+func asExitError(err error) *exec.ExitError {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			return &exitError{code: 128 + int(ws.Signal())} // signal-terminated; report already on stderr
-		}
-		return &exitError{code: ee.ExitCode()} // ordinary non-zero exit
+		return ee
 	}
-	return &exitError{code: 1, msg: "run " + bin + ": " + err.Error()}
+	return nil
+}
+
+// childExitCode maps a child's wait status to POSIX parity: a signal-terminated
+// child is 128+signo, an ordinary exit keeps its own code, and ExitCode() == -1
+// (killed, no wait status) is reported as 1 rather than leaking 255.
+func childExitCode(ee *exec.ExitError) int {
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	if code := ee.ExitCode(); code >= 0 {
+		return code
+	}
+	return 1
+}
+
+// childExitError wraps a child's non-zero status as an exitError. The message is
+// empty on purpose: the child already wrote its own diagnostics to stderr.
+func childExitError(ee *exec.ExitError) error { return &exitError{code: childExitCode(ee)} }
+
+// annotateErr prefixes a failure with a tier label while PRESERVING its exit code.
+// A plain fmt.Errorf would keep the code discoverable for errors.As but main prints
+// the inner exitError's message only, silently dropping the wrapper's context.
+func annotateErr(err error, prefix string) error {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return &exitError{code: ee.code, msg: prefix + ee.msg}
+	}
+	return fmt.Errorf("%s%w", prefix, err)
 }
 
 // mapToEnvSlice turns a merged env map into a sorted os.Environ()-style slice for

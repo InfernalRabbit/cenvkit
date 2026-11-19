@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InfernalRabbit/cenvkit/internal/provenance"
 )
@@ -309,9 +310,20 @@ func TestReview_SourceLauncherContext(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		c := exec.Command("sh", launcher, "env", "--format", "json")
-		c.Dir, c.Env = dir, envWithout("CK_VALUE", "CENVKIT_ENV")
-		out, err := c.CombinedOutput()
+		// The launcher shells out to `go build`; on a cold module cache that can
+		// fail transiently when other packages of `go test ./...` are compiling at
+		// the same time. Retry once before failing.
+		var out []byte
+		var err error
+		for attempt := 0; attempt < 2; attempt++ {
+			c := exec.Command("sh", launcher, "env", "--format", "json")
+			c.Dir, c.Env = dir, envWithout("CK_VALUE", "CENVKIT_ENV")
+			out, err = c.CombinedOutput()
+			if err == nil && strings.Contains(string(out), `"CK_VALUE": "caller"`) {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
 		if err != nil || !strings.Contains(string(out), `"CK_VALUE": "caller"`) {
 			t.Fatalf("module=%v: launcher lost module context/caller cwd: %v %s", module, err, out)
 		}

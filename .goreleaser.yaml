@@ -35,6 +35,14 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    # Ship the project's own legal/notice files inside every archive (tar.gz and
+    # the Windows zip): the MIT LICENSE plus THIRD_PARTY_NOTICES.md, which
+    # carries the Apache-2.0 §4(d) NOTICE texts of the linked dependencies.
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - THIRD_PARTY_NOTICES.md
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -48,9 +56,14 @@ snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 
 changelog:
-  sort: asc
+  # Newest first in the release notes.
+  sort: desc
   filters:
+    # Drop non-user-facing conventional commits. The optional scope group
+    # matches the scoped spelling too (`chore(release):`, `docs(readme):`,
+    # `ci(github):`, ...), which plain `^chore:` used to let through.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'

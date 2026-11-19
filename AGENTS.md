@@ -8,14 +8,20 @@
 - `make ci` runs vet, formatting, import-seam, build, and tests; lint runs only
   when installed. CI requires golangci-lint v2.12.2, built with the project's Go:
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`,
-  then `golangci-lint run ./...`. An older-Go prebuilt linter rejects this module.
+  then `golangci-lint run ./...`. An older-Go prebuilt linter rejects this module;
+  conversely, if the machine's default `go` is NEWER than go.mod's, a linter built
+  with the project Go cannot typecheck that stdlib. `make lint`/`make ci` pin
+  `GOTOOLCHAIN` to the go.mod version for exactly that reason.
 - Docker-free suite: `SMOKE_SKIP_DOCKER=1 go test ./... -count=1`.
   Focused package/test: `go test ./internal/engine -run '^TestFlatten_' -count=1`.
 - Compose-related changes also require `go test ./test/... -v -count=1` with
   Docker Compose available and `SMOKE_SKIP_DOCKER` unset. The gate probes
   `docker compose version`; these config-only tests do not require a daemon.
-  Skipped Docker assertions do not establish Compose parity. CI installs the
-  **latest** Compose release; do not assume the runner's bundled version is used.
+  Skipped Docker assertions do not establish Compose parity. CI installs a
+  **pinned** Compose release (`COMPOSE_VERSION` + sha256 in `ci.yml`) — do not assume
+  the runner's bundled version is used, and bump the pin deliberately (version and
+  checksum in one commit) after the suite passes. A non-blocking `compose-latest`
+  job reports drift against upstream.
 - Recheck `make fmt-check` after the final Go edit. For release-config changes,
   run `goreleaser check` (also a separate CI job).
 - Acceptance `TestMain` builds its own temporary CLI; no prebuilt binary needed.

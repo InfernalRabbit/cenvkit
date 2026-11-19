@@ -56,6 +56,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // ─── stale-count guard ────────────────────────────────────────────────────────
@@ -99,14 +100,27 @@ func TestMain(m *testing.M) {
 		panic("mktemp: " + err.Error())
 	}
 	cenvkitBin = filepath.Join(tmp, "cenvkit")
-	build := exec.Command("go", "build", "-o", cenvkitBin, "../cmd/cenvkit")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		panic("build cenvkit: " + err.Error())
+	if err := buildCenvkit(cenvkitBin); err != nil {
+		// A cold module cache plus the parallel package builds of `go test ./...`
+		// can make this build fail transiently (module-download / cache-lock
+		// contention). One retry keeps the suite deterministic without hiding a
+		// real compile error: a genuine failure fails again and panics with it.
+		time.Sleep(2 * time.Second)
+		if err := buildCenvkit(cenvkitBin); err != nil {
+			panic("build cenvkit: " + err.Error())
+		}
 	}
 	code := m.Run()
 	_ = os.RemoveAll(tmp)
 	os.Exit(code)
+}
+
+// buildCenvkit compiles the CLI under test into out. Kept separate so TestMain can
+// retry a transient failure once (see the comment there).
+func buildCenvkit(out string) error {
+	build := exec.Command("go", "build", "-o", out, "../cmd/cenvkit")
+	build.Stderr = os.Stderr
+	return build.Run()
 }
 
 func runCenvkit(t *testing.T, dir string, env []string, args ...string) (string, error) {

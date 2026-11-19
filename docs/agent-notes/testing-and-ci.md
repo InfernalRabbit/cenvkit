@@ -97,9 +97,10 @@ Go переиспользует кэш результатов `go test`, ког�
 |---|---|
 | `lint` | `go vet`, gate по `gofmt -l`, seam-проверка compose-go, `golangci-lint` через `go install` |
 | `goreleaser-check` | `goreleaser check` |
-| `test` (ubuntu + macos) | `go build`, `go test ./...` с `SMOKE_SKIP_DOCKER=1` |
-| `acceptance-docker` | ставит latest Compose, печатает версию, `go test ./test/... -v` |
-| `acceptance-no-docker` | `go test ./test/... -v` с `SMOKE_SKIP_DOCKER=1` |
+| `release-snapshot` | `goreleaser release --snapshot --clean --skip=publish` — все 6 таргетов + архивы собираются ДО тега |
+| `test` (ubuntu + macos) | `go build`, `go test ./... -count=1` с `SMOKE_SKIP_DOCKER=1` (== no-docker acceptance: `./...` включает `./test`) |
+| `acceptance-docker` | ставит **пиннутый** Compose (`COMPOSE_VERSION` + sha256 из env-блока), сверяет `version --short`, `go test ./test/... -v -count=1` |
+| `compose-latest` | необязательный (`continue-on-error`) дрейф-детектор: тот же acceptance против upstream latest |
 
 Seam-проверка: `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...` БЕЗ
 `-deps` (с `-deps` в левой колонке оказываются подпакеты самого compose-go →

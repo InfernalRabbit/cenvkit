@@ -109,6 +109,9 @@ eval "$(cenvkit env --format shell)"   # load it into the current shell
 (and to `env-debug --effective`). `-e <env>` overrides `CENVKIT_ENV` for one call;
 shell-set vars win over the chain (compose parity).
 
+> ⚠️ `env`, `run --print` and `env-debug --value|--trace` print values **verbatim,
+> including secrets**. That is the point — but don't pipe them into shared logs.
+
 **Named chains** — give `.cenvkit.envchain` optional `[name]` sections and pick one
 with `--chain <name>` (default = the header-less / `[default]` list); sections are
 standalone (no inheritance) and orthogonal to `CENVKIT_ENV`.

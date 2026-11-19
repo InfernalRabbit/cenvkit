@@ -44,12 +44,17 @@ func Emit(w io.Writer, r Resolved, f Format) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(obj)
 	case FormatShell:
+		// Validate EVERY key before writing anything: a rejected key half-way
+		// through would leave a partial `export` block on stdout, which a caller
+		// piping into `eval` would execute (MF8).
 		for _, k := range r.ChainKeys {
 			if !validShellIdent(k) {
 				// A key that is not a valid shell identifier cannot be a safe `export`
-				// target; refuse rather than emit something eval would mangle (MF8).
+				// target; refuse rather than emit something eval would mangle.
 				return fmt.Errorf("key %q is not a valid shell identifier; cannot emit --format shell", k)
 			}
+		}
+		for _, k := range r.ChainKeys {
 			_, _ = fmt.Fprintf(w, "export %s=%s\n", k, shellQuote(r.Full[k]))
 		}
 		return nil

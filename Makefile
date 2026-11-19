@@ -94,17 +94,21 @@ endif
 # Test
 # ──────────────────────────────────────────────────────────────────────────────
 
+# -count=1 defeats the go test result cache: with a warm GOCACHE a previous
+# "ok" can be replayed without re-running anything, which is exactly the signal
+# CI must not accept. Same reason every `go test` in .github/workflows/ci.yml
+# carries -count=1.
 test: ## Run the full test suite (docker-gated acceptance included if daemon is up)
-	go test ./...
+	go test ./... -count=1
 
 test-nodocker: ## Run tests without docker (skips docker-gated acceptance)
-	SMOKE_SKIP_DOCKER=1 go test ./...
+	SMOKE_SKIP_DOCKER=1 go test ./... -count=1
 
 test-acceptance: ## Run the docker-gated acceptance suite verbosely
-	go test ./test/... -v
+	go test ./test/... -v -count=1
 
 test-race: ## Run tests with the race detector
-	go test -race ./...
+	go test -race ./... -count=1
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Code quality
@@ -125,9 +129,21 @@ fmt-check: ## Check formatting; fails (non-zero) if any file is unformatted
 	fi
 	@echo "All files gofmt-clean."
 
+# golangci-lint must run under the module's OWN Go toolchain. The linter binary
+# is built from source with a specific Go (CI builds v2.12.2 with the project's
+# Go); when the machine's default `go` is NEWER, the linter's typechecker sees a
+# standard library it was not built against and reports bogus "undefined: rand"
+# style typecheck errors. Pinning GOTOOLCHAIN to go.mod's version makes the local
+# gate reproduce CI instead of failing on a toolchain mismatch.
+LINT_TOOLCHAIN := $(shell go list -m -f '{{.GoVersion}}' 2>/dev/null)
+
+# Keep the pin in one place: both `lint` and `ci` run it. An empty probe (not in
+# a module) falls back to running the linter as-is.
+GOLANGCI = if [ -n "$(LINT_TOOLCHAIN)" ]; then GOTOOLCHAIN=go$(LINT_TOOLCHAIN) golangci-lint run; else golangci-lint run; fi
+
 lint: ## Run golangci-lint if installed, else print a skip notice
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-	  golangci-lint run; \
+	  $(GOLANGCI); \
 	else \
 	  echo "golangci-lint not installed — skipping lint (install from https://golangci-lint.run)."; \
 	fi
@@ -159,7 +175,7 @@ seam: ## Fail if any package other than internal/engine imports compose-go
 
 ci: vet fmt-check seam build test ## Run CI checks: vet fmt-check seam build test (lint if available)
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-	  golangci-lint run; \
+	  $(GOLANGCI); \
 	fi
 
 # ──────────────────────────────────────────────────────────────────────────────
