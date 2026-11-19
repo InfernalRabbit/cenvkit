@@ -1,0 +1,42 @@
+# cenvkit — ignore real env files; keep the committed templates.
+#
+# The env-chain's runtime files are project-local and may carry secrets, so
+# they must never be committed. The example.* templates are tracked.
+
+# Real env files. A chain entry may name ANY path (docs/cenvkit.md), so cover
+# non-dot names and per-tier/per-host variants too: `.*.env` alone misses
+# `secrets.env`, `dev.env` and `.env.local`.
+.env
+.*.env
+.env.*
+secrets.env
+*.secrets.env
+
+# Key material and credential stores (defence in depth — never commit these).
+*.pem
+*.key
+*.p12
+*.jks
+id_rsa*
+.netrc
+.npmrc
+
+# But always keep the tracked templates (negations win over the rules above).
+!example.env
+!example.*.env
+!example.secrets.env
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+
+# Test scratch (smoke.sh uses mktemp, but guard local runs)
+/tmp-smoke/
+
+# Go build artifacts — never commit a built binary.
+# NOTE: the tracked launcher `cenvkit` is a POSIX shim, so do NOT ignore the
+# bare name; the local fast-path build must be namespaced (e.g. .cenvkit.bin).
+.cenvkit.bin
+.cenvkit-bin
+/dist/

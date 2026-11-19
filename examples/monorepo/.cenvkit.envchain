@@ -1,0 +1,52 @@
+# ============================================
+# .cenvkit.envchain — the ROOT project-level env chain (Layer 1).
+#
+# These are the files that drive ${VAR} interpolation in the root + included
+# compose YAML. ${ENV} (a.k.a. ${CENVKIT_ENV}) resolves as shell CENVKIT_ENV >
+# .env CENVKIT_ENV > "dev". Missing files are silently skipped. Last wins.
+#
+# Subproject service env_file: paths (web/.web.env, api/.api.env) are NOT listed
+# here — they are runtime-only (per-service, native Docker container env). They
+# do NOT feed ${VAR} interpolation. `cenvkit env-debug --files` shows both groups:
+# Layer-1 interpolation files and runtime-only service env_file: paths by service.
+# ============================================
+
+# Layer 1: root base + env-specific overlay
+.env
+.${ENV}.env
+
+# Per-machine override (optional): selected by the machine's hostname. Beats the
+# shared .env / .${ENV}.env so a single dev box can tweak log levels, local
+# paths, feature flags — but it is still ABOVE nothing secret: keep it BELOW
+# .secrets.env. NEVER put secrets in a host file (it is not gitignored by the
+# committed templates the way .secrets.env is). ${HOST} and ${HOSTNAME} are
+# interchangeable; both resolve to the machine hostname. Missing file ⇒ skipped.
+.${HOSTNAME}.env
+
+# Secrets tier (last wins, gitignored). Last-wins within this Layer-1 chain.
+# Per-subproject secrets belong in each subproject's own gitignored env file
+# (e.g. web/.web.secrets.env) — listed there via service env_file: (runtime-only).
+.secrets.env
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Named chains (C4): each section is STANDALONE — no inheritance from [default].
+# Select with: cenvkit --chain <name> <subcommand>
+
+# [ci] — minimal CI chain: only the committed base + a CI-specific overlay.
+# Secret-store-backed CI does not need the hostname override or a local
+# .secrets.env, so they are intentionally omitted to keep the chain hermetic.
+[ci]
+.env
+.ci.env
+
+# [api] — API-service focused chain: base + env-specific overlay + API overlay.
+# Demonstrates a service-scoped named chain alongside the project default.
+[api]
+.env
+.${ENV}.env
+.api-chain.env
+
+# [web] — web-service focused chain: base + env tier only; no hostname/secrets.
+[web]
+.env
+.${CENVKIT_ENV}.env

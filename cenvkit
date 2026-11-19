@@ -1,0 +1,13 @@
+#!/bin/sh
+# Vendored-mode launcher: builds in its own module, runs in the caller's cwd.
+# For lower latency, `go build -o .cenvkit.bin ./cmd/cenvkit` and run that
+# (.cenvkit.bin is gitignored). No committed binaries.
+set -eu
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/cenvkit.XXXXXXXX")
+trap 'rm -rf "$tmp"' 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+go -C "$dir" build -o "$tmp/cenvkit" ./cmd/cenvkit
+"$tmp/cenvkit" "$@"

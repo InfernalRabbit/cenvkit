@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26"
+
+jobs:
+  lint:
+    name: vet / gofmt / golangci-lint / seam
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt (fail if any file is unformatted)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: compose-go seam check (only internal/engine may import compose-go)
+        run: |
+          MOD=$(go list -m)
+          # Strip the engine package's OWN line first (anchored ImportPath +
+          # trailing space), THEN look for any remaining compose-go import. An
+          # unanchored `grep -v .../internal/engine` would wrongly exclude any
+          # package that merely IMPORTS internal/engine (e.g. cmd) and thus miss
+          # a real leak there.
+          leaks=$(go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... \
+            | grep -v "^${MOD}/internal/engine " \
+            | grep 'compose-spec/compose-go' || true)
+          if [ -n "$leaks" ]; then
+            echo "compose-go leaked outside internal/engine:"
+            echo "$leaks"
+            exit 1
+          fi
+          echo "seam OK"
+
+      - name: golangci-lint
+        # Install via `go install` so the linter is built with THIS job's Go
+        # (1.26). The golangci-lint-action ships a prebuilt binary built with an
+        # older Go that refuses to run against a newer go.mod target ("the Go
+        # language version used to build golangci-lint is lower than the targeted
+        # Go version"). Pinned for reproducibility (matches local).
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
+  goreleaser-check:
+    name: goreleaser check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+  test:
+    name: unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go build
+        run: go build ./...
+      - name: go test
+        # The unit job is docker-free on purpose (it runs on macOS too, which has
+        # no docker daemon); the acceptance-docker job covers the docker path.
+        env:
+          SMOKE_SKIP_DOCKER: "1"
+        run: go test ./...
+
+  acceptance-docker:
+    name: acceptance (docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # ubuntu-latest ships an OLD bundled compose plugin (v2.38.2). Install the
+      # latest release so CI tracks current Docker Compose, not the runner's pin.
+      - name: Install latest Docker Compose
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -fSL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)" \
+            -o ~/.docker/cli-plugins/docker-compose
+          chmod +x ~/.docker/cli-plugins/docker-compose
+      - name: docker compose version
+        run: docker compose version
+      - name: acceptance suite (docker)
+        run: go test ./test/... -v
+
+  acceptance-no-docker:
+    name: acceptance (no docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: acceptance suite (docker-dependent assertions skipped)
+        env:
+          SMOKE_SKIP_DOCKER: "1"
+        run: go test ./test/... -v

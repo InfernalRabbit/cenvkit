@@ -1,0 +1,41 @@
+# ============================================
+# Root compose — the UNIFIED stack, run from the repo root.
+#
+# It `include:`s each subproject's own compose file. Each subproject defines its
+# OWN service; the root does NOT redefine them. Docker Compose deliberately does
+# not merge an `include:`-imported service with a same-named root `services:`
+# entry — it errors (docker/compose #11488). So cross-cutting bits that belong to
+# one subproject live in that subproject's own file (e.g. web's IS_DEV tier flag,
+# moved into web/docker-compose.yml). Each subproject still runs standalone from
+# its own dir (see web/ and api/); this file just composes them into one stack.
+#
+# Requires Docker Compose v2.24+ (for `env_file: required:` and `include:`).
+#
+# WHY the kit matters here: the included subproject compose files reference
+# ${WEB_PORT} / ${API_PORT}, but those vars live ONLY in the subprojects' own
+# service env_file: (web/.web.env, api/.api.env). Those env_file:s are
+# runtime-only — they do NOT feed ${VAR} interpolation. So ${WEB_PORT} and
+# ${API_PORT} fall back to :-0 at the run. Use `cenvkit env-debug --trace --var
+# WEB_PORT` to see the gap; promote a port to the Layer-1 chain (.env) if you
+# need it to interpolate at compose time.
+# ============================================
+
+include:
+  - path: ./web/docker-compose.yml
+  - path: ./api/docker-compose.yml
+  - path: ./services/reports/docker-compose.yml   # nested one level deeper (services/<svc>/)
+
+services:
+  # Optional helper — OFF by default, enabled with COMPOSE_PROFILES=tools.
+  # tools is root-OWNED (not imported via include:), so it MAY join the shared
+  # network and demonstrates cenvkit's profiles passthrough: the shim
+  # forwards COMPOSE_PROFILES to `docker compose` unchanged (no kit state).
+  tools:
+    image: busybox
+    profiles: [tools]
+    command: ["sh", "-c", "echo tools; sleep 3600"]
+    networks: [shared]
+
+networks:
+  shared:
+    driver: bridge

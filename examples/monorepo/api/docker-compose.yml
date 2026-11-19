@@ -1,0 +1,26 @@
+# ============================================
+# api subproject — base compose.
+#
+# Runs two ways:
+#   Standalone:  from this dir (api/) via its own ./docker (see api/Makefile).
+#   Unified:     pulled into the root stack by the root docker-compose.yml
+#                `include:`.
+#
+# API_PORT is declared ONLY in this subproject's service env_file: (.api.env).
+# That file is runtime-only (container env) — NOT folded into COMPOSE_ENV_FILES.
+# So ${API_PORT:-0} falls back to 0 at compose-time interpolation.
+# `cenvkit env-debug --trace --var API_PORT` surfaces the gap; add API_PORT to
+# the Layer-1 chain (.env) to make it feed ${VAR} interpolation.
+# ============================================
+
+services:
+  api:
+    image: busybox
+    command: ["sh", "-c", "echo api on $${API_PORT}; sleep 3600"]
+    env_file:
+      - path: ./.api.env
+        required: false
+    ports:
+      - "${API_PORT:-0}:80"
+    environment:
+      API_PORT: "${API_PORT:-0}"

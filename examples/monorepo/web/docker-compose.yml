@@ -1,0 +1,36 @@
+# ============================================
+# web subproject — base compose.
+#
+# Runs two ways:
+#   Standalone:  from this dir (web/) via its own ./docker (see web/Makefile).
+#   Unified:     pulled into the root stack by the root docker-compose.yml
+#                `include:`.
+#
+# WEB_PORT is declared ONLY in this subproject's service env_file: (.web.env).
+# That file is runtime-only (container env) — NOT folded into COMPOSE_ENV_FILES.
+# So ${WEB_PORT:-0} falls back to 0 at compose-time interpolation.
+# `cenvkit env-debug --trace --var WEB_PORT` surfaces the gap; add WEB_PORT to
+# the Layer-1 chain (.env) to make it feed ${VAR} interpolation.
+# ============================================
+
+services:
+  web:
+    image: busybox
+    command: ["sh", "-c", "echo web on $${WEB_PORT}; sleep 3600"]
+    env_file:
+      - path: ./.web.env
+        required: false
+      # Per-environment tier, selected by ${CENVKIT_ENV} (dev/prod). Loaded after
+      # .web.env (last-wins). required: false → a missing tier is just skipped.
+      # ${CENVKIT_ENV} resolves from the Layer-1 chain (CENVKIT_ENV is there).
+      - path: ./.web.${CENVKIT_ENV:-dev}.env
+        required: false
+    ports:
+      - "${WEB_PORT:-0}:80"
+    environment:
+      WEB_PORT: "${WEB_PORT:-0}"
+      # Root tier flag, surfaced on web (the unified stack's user-facing service).
+      # Chain-interpolated: true in dev / false in prod, selected by CENVKIT_ENV
+      # via .dev.env / .prod.env. Lives here (not the root) because the root must
+      # not redefine an include:-imported service.
+      IS_DEV: "${IS_DEV:-unset}"
