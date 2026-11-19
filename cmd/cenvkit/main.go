@@ -97,8 +97,16 @@ func currentStyler() provenance.Styler {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "cenvkit",
-		Short:         "Layered env-file assembly for Docker Compose",
+		Use:   "cenvkit",
+		Short: "Layered env-file assembly for Docker Compose",
+		Long: "cenvkit assembles the layered env chain that Docker Compose does not, delivers it\n" +
+			"to compose, to any local process, or as dotenv/json/shell, and explains the\n" +
+			"env_file: -> ${VAR} interpolation gap Compose leaves silent (daemon-free).",
+		Example: "  cenvkit compose up -d\n" +
+			"  cenvkit run -- npm test\n" +
+			"  cenvkit env --format shell\n" +
+			"  cenvkit gap-report                 # exit 1 = gaps, 0 = clean, 2 = no compose file\n" +
+			"  cenvkit env-debug --var API_PORT   # where the value comes from",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// Resolve ONE styler for the whole invocation from --color (+ NO_COLOR /
@@ -129,8 +137,10 @@ func newRootCmd() *cobra.Command {
 	// init) inherit it harmlessly, exactly as they inherit --project-dir.
 	root.PersistentFlags().String("chain", "", "named chain section from .cenvkit.envchain (default: the header-less/[default] chain)")
 	root.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "Print the cenvkit version",
+		Use:     "version",
+		Short:   "Print the cenvkit version",
+		Long:    "Print the cenvkit version and the compose-go version it is linked against.",
+		Example: "  cenvkit version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintln(out, resolveVersion())
@@ -328,6 +338,10 @@ func newEnvFilesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "env-files",
 		Short: "Print the resolved COMPOSE_ENV_FILES chain, one path per line",
+		Long: "Print the resolved Layer-1 chain (COMPOSE_ENV_FILES), one absolute path per line.\n" +
+			"Empty output means the selected chain has no existing files.",
+		Example: "  cenvkit env-files\n" +
+			"  cenvkit --chain ci env-files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			merged, _, err := assemble(cmd)
 			if err != nil {
@@ -344,8 +358,18 @@ func newEnvFilesCmd() *cobra.Command {
 
 func newComposeCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:                "compose [args...]",
-		Short:              "Assemble the chain and exec `docker compose`",
+		Use:   "compose [args...]",
+		Short: "Assemble the chain and exec `docker compose`",
+		Long: "Assemble the Layer-1 chain, export COMPOSE_ENV_FILES and exec `docker compose`\n" +
+			"with every argument passed through.\n" +
+			"\n" +
+			"The wrapper flags --project-dir, --chain and --color are extracted wherever they\n" +
+			"appear BEFORE a `--`; everything else (and everything after `--`) goes to docker\n" +
+			"untouched. `cenvkit compose --help` prints docker compose's own help; run\n" +
+			"`cenvkit help compose` for this text.",
+		Example: "  cenvkit compose up -d\n" +
+			"  cenvkit compose config --services\n" +
+			"  cenvkit compose --project-dir ./web up -d",
 		DisableFlagParsing: true, // pass everything through to docker compose
 		RunE: func(cmd *cobra.Command, args []string) error {
 			args, err := extractWrapperFlags(cmd, args)
@@ -411,6 +435,11 @@ func newValidateCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate the resolved compose config (docker compose config -q)",
+		Long: "Validate the resolved compose config with `docker compose config -q`.\n" +
+			"--all validates both the dev and the prod chain. docker's exit code is\n" +
+			"propagated (0 valid, non-zero invalid).",
+		Example: "  cenvkit validate\n" +
+			"  cenvkit validate --all",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s := currentStyler()
 			run := func(env string) error {
@@ -467,6 +496,11 @@ func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Seed .X from example.X (no-clobber) and fan out one level",
+		Long: "Seed each .X from the committed example.X template, then fan out one directory\n" +
+			"level. Never overwrites an existing file and refuses to follow symlinks (a\n" +
+			"committed example.* link cannot pull an outside file into the project).",
+		Example: "  cenvkit init\n" +
+			"  cenvkit --project-dir ./web init",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := resolveProjectDir(cmd)
 			if err != nil {
@@ -678,11 +712,31 @@ func newEnvDebugCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "env-debug",
 		Short: "Inspect the resolved env chain with provenance",
-		Long: "Inspect the resolved env chain with provenance.\n\n" +
+		Long: "Inspect the resolved env chain with provenance (daemon-free).\n" +
+			"\n" +
 			"Views CASCADE: repeat --show and the sections render in the order given\n" +
-			"(no --show => the Layer-1 list). Filters narrow every view with the data:\n" +
-			"--var KEY on list/files/overview/effective/trace/json, --service NAME on the\n" +
-			"per-service views. Impossible combinations exit 2 instead of guessing.",
+			"(no --show => the Layer-1 list):\n" +
+			"  list       Layer-1 chain files\n" +
+			"  files      interpolation set + runtime-only service env_file: paths\n" +
+			"  overview   per-file layering (raw values, +/~/· markers)\n" +
+			"  effective  per-service container env with the source of every value\n" +
+			"  trace      one variable's story (requires --var)\n" +
+			"  deps       dependency closure of --var (definitions, refs, consumers)\n" +
+			"\n" +
+			"Filters narrow every view that has the data: --var KEY on\n" +
+			"list/files/overview/effective/trace/deps/json and --service NAME on the\n" +
+			"per-service views. --var alone implies trace, --service alone implies\n" +
+			"effective. --redact masks values while keeping keys, files and layers, and\n" +
+			"the tier header. --json emits only the sections --show selects; without\n" +
+			"--show it keeps the whole report.\n" +
+			"\n" +
+			"Exit codes: 0 ok, 1 a view matched nothing, 2 usage error (impossible flags).",
+		Example: "  cenvkit env-debug --var API_PORT\n" +
+			"  cenvkit env-debug --show files --show effective --var API_PORT\n" +
+			"  cenvkit env-debug --show deps --var LIVEKIT_KEY --redact\n" +
+			"  cenvkit env-debug --show overview --service web\n" +
+			"  cenvkit env-debug --json --show effective --var API_PORT\n" +
+			"  cenvkit env-debug --value --var API_PORT",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			req, err := buildDebugRequest(shows, varName, service, jsonOut, redact,
 				aliasList, aliasFiles, aliasOverview, aliasEffective, aliasTrace, aliasValue)
@@ -767,7 +821,7 @@ func newEnvDebugCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringArrayVar(&shows, "show", nil, "view to render, repeatable and cascading: list|files|overview|effective|trace")
+	c.Flags().StringArrayVar(&shows, "show", nil, "cascading view, repeatable: list|files|overview|effective|trace|deps")
 	c.Flags().StringVar(&varName, "var", "", "filter every view by variable KEY (implies --show trace when no view is given)")
 	c.Flags().StringVar(&service, "service", "", "filter per-service views by SERVICE (implies --show effective when no view is given)")
 	c.Flags().BoolVar(&jsonOut, "json", false, "machine-readable JSON; --show selects the sections, filters apply")
@@ -802,6 +856,14 @@ func newGapReportCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "gap-report",
 		Short: "Report env_file:->${VAR} interpolation gaps (CI/pre-build lint; daemon-free)",
+		Long: "Report variables that a YAML ${VAR} reference resolves to a fallback because\n" +
+			"the value lives only in a service env_file: (it is runtime-only, never an\n" +
+			"interpolation input). Daemon-free: the compose model is loaded in-process.\n" +
+			"\n" +
+			"Exit codes: 0 clean, 1 gaps found, 2 no compose file found.",
+		Example: "  cenvkit gap-report\n" +
+			"  cenvkit gap-report --json | jq '.gaps'\n" +
+			"  cenvkit gap-report --env-file data/.compiled.env",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := resolveProjectDir(cmd)
 			if err != nil {
@@ -864,7 +926,16 @@ func newEnvCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "env",
 		Short: "Print the chain-derived environment (dotenv|json|shell)",
-		Args:  cobra.NoArgs,
+		Long: "Print the chain-derived environment: only the keys the chain contributed,\n" +
+			"sorted, with the shell environment overlaid (shell wins). Values are expanded\n" +
+			"with compose-go's dotenv engine by default; --no-expand keeps ${VAR} literal.\n" +
+			"\n" +
+			"Formats: dotenv (default), json, shell (safe to eval).",
+		Example: "  cenvkit env\n" +
+			"  eval \"$(cenvkit env --format shell)\"\n" +
+			"  cenvkit env --format json | jq -r 'keys[]'\n" +
+			"  cenvkit env -e prod --no-expand",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			f, err := envmap.ParseFormat(format)
 			if err != nil {
@@ -900,8 +971,17 @@ func newRunCmd() *cobra.Command {
 		envFiles []string
 	)
 	c := &cobra.Command{
-		Use:                   "run [-e ENV] [--expand|--no-expand] [--print] -- <cmd> [args...]",
-		Short:                 "Exec a command with the chain-derived environment",
+		Use:   "run [-e ENV] [--expand|--no-expand] [--print] -- <cmd> [args...]",
+		Short: "Exec a command with the chain-derived environment",
+		Long: "Exec a command with the merged chain environment (shell wins, compose parity).\n" +
+			"The `--` separator is required so cenvkit's own flags never collide with the\n" +
+			"child's. --print dumps the environment and skips the exec.\n" +
+			"\n" +
+			"Exit codes: the child's, or 127 (not found), 126 (not executable), 128+signo\n" +
+			"(killed by a signal).",
+		Example: "  cenvkit run -- npm test\n" +
+			"  cenvkit run -e prod --no-expand -- printenv\n" +
+			"  cenvkit run --print -- env",
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// `--` enforcement: ArgsLenAtDash() is the count of args BEFORE `--` when

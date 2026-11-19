@@ -6,6 +6,18 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-19
+
+### Changed
+
+- **Help text brought up to date.** Every command now documents its current
+  contract (Long description + runnable examples): the cascading `--show` views
+  including `deps`, the filter matrix, defaults, conflicts and exit codes; the
+  `compose` passthrough rules (wrapper flags are extracted only before `--`);
+  `gap-report` exit codes; `run` exit codes; `env` formats; `init` symlink
+  refusal. `cenvkit help compose` shows cenvkit's own text where
+  `cenvkit compose --help` intentionally shows docker's.
+
 ## [0.9.0] — 2026-11-19
 
 ### Added
