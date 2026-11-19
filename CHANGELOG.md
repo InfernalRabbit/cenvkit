@@ -6,6 +6,19 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Documentation
+
+- `docs/agent-notes/compose-go.md` (+ RU): env_file interpolation facts — it
+  exists since Compose v2.2.0, `format: raw` since v2.30.0, precedence fixed in
+  v2.35.0 (project env > environment > earlier env_file values), order rules and
+  the literal-`$` footgun.
+
+### Tests
+
+- `TestEnvDebug_EffectiveMatchesComposeEnvFileInterpolation`: pins
+  `--show effective` to `docker compose config` for env_file interpolation
+  (`B=${A}`, `${MISSING:-def}`).
+
 ## [0.9.3] — 2026-11-19
 
 ### Added

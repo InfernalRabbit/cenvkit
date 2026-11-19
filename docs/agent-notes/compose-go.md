@@ -76,6 +76,30 @@ the SAME `resolveComposeFiles` so they cannot drift apart.
   (logrus, cannot be disabled): the value is right, but `run`/`env` stderr is
   noisy.
 
+## env_file interpolation (Compose parity)
+
+`env_file` VALUES are interpolated by Compose. This is separate from YAML
+interpolation and does not contradict the runtime-only rule (env_file values never
+feed `${VAR}` in the model):
+
+- since Compose v2.2.0 (compose-go v1.0.8: `resolveEnvironment` ->
+  `dotenv.ParseWithLookup`); unquoted and double-quoted values expand, single
+  quotes stay literal (spec: "Env_file format");
+- `format: raw` (v2.30.0+) opts a file out completely; `required: false` is
+  v2.24.0+;
+- inside one file only EARLIER lines are visible (`B=${A}` above `A=...` warns and
+  yields an empty value); across the list, later files see earlier ones and the
+  last file wins the key;
+- precedence since Compose v2.35.0 (compose-go v2.5.0, "Fix interpolation
+  priorities"): project env (shell, `.env`, `--env-file`, `COMPOSE_ENV_FILES`) >
+  explicit `environment:` > earlier env_file values; before v2.35.0 the order was
+  reversed;
+- a literal `$` in an unquoted/double-quoted value is expanded (`pa$word` ->
+  `pa` plus a warning): single-quote it, escape as `$$`, or use `format: raw`;
+- `parseEnvFile` models the same order (lookup: external -> this file -> previous
+  files), so `--show effective` matches `docker compose config`
+  (`TestEnvDebug_EffectiveMatchesComposeEnvFileInterpolation`).
+
 ## Templates and interpolation
 
 - `template.Mapping = func(string) (string, bool)`; `bool` = "the variable

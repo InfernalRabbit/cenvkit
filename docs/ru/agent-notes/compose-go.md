@@ -73,6 +73,30 @@ proj, err := opts.LoadProject(ctx)
 - `GetEnvFromFile` безусловно логирует `level=warning ... variable is not set`
   (logrus, отключить нельзя): значение верное, но stderr `run`/`env` шумит.
 
+## Интерполяция в env_file (паритет с Compose)
+
+Compose интерполирует **значения** `env_file`. Это отдельно от интерполяции YAML
+и не противоречит правилу runtime-only (значения env_file никогда не питают
+`${VAR}` в модели):
+
+- с Compose v2.2.0 (compose-go v1.0.8: `resolveEnvironment` ->
+  `dotenv.ParseWithLookup`); unquoted и double-quoted значения раскрываются,
+  одинарные кавычки остаются литералом (спека: "Env_file format");
+- `format: raw` (v2.30.0+) полностью отключает интерполяцию файла;
+  `required: false` — v2.24.0+;
+- внутри файла видны только строки ВЫШЕ (`B=${A}` до `A=...` даёт warning и
+  пустое значение); по списку более поздние файлы видят более ранние, а для
+  ключа побеждает последний файл;
+- приоритет с Compose v2.35.0 (compose-go v2.5.0, "Fix interpolation priorities"):
+  project env (shell, `.env`, `--env-file`, `COMPOSE_ENV_FILES`) > явный
+  `environment:` > ранее прочитанные env_file-значения; до v2.35.0 порядок был
+  обратным;
+- литеральный `$` в unquoted/double-quoted значении раскрывается (`pa$word` ->
+  `pa` + warning): одинарные кавычки, экранирование `$$` или `format: raw`;
+- `parseEnvFile` моделирует тот же порядок (lookup: внешнее -> этот файл ->
+  предыдущие), поэтому `--show effective` совпадает с `docker compose config`
+  (`TestEnvDebug_EffectiveMatchesComposeEnvFileInterpolation`).
+
 ## Шаблоны и интерполяция
 
 - `template.Mapping = func(string) (string, bool)`; `bool` = «переменная есть».

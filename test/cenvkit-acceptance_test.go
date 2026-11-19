@@ -1,5 +1,5 @@
 // Package acceptance ports the smoke-monorepo.sh and smoke.sh suites to drive the
-// cenvkit binary directly. Current assertion count: 159.
+// cenvkit binary directly. Current assertion count: 161.
 //
 // Invocation map (replaces all ./docker / run_shim calls):
 //
@@ -65,7 +65,7 @@ import (
 // The file-header comment (line 2) is kept in sync by TestAssertionCountHeader
 // below — if you bump one, the test forces you to bump the other.
 // This replaces the recurring manual "133 total" / "131 count" drift class.
-const declaredAssertions = 137 + reviewRegressionAssertions
+const declaredAssertions = 139 + reviewRegressionAssertions
 
 // TestAssertionCountHeader verifies that the file-header "Current assertion count: N"
 // comment on line 2 matches the declaredAssertions const above.
@@ -2682,4 +2682,72 @@ func assertBefore(lines []string, sub1, sub2 string) bool {
 		}
 	}
 	return i1 != -1 && i2 != -1 && i1 < i2
+}
+
+// TestEnvDebug_EffectiveMatchesComposeEnvFileInterpolation pins Compose parity for
+// env_file interpolation: Compose expands unquoted/double-quoted env_file values
+// against the project env; cenvkit --show effective must report the same container
+// env. This is docker-config-only (no daemon).
+func TestEnvDebug_EffectiveMatchesComposeEnvFileInterpolation(t *testing.T) {
+	if !dockerAvailable() {
+		t.Skip("SMOKE_SKIP_DOCKER=1")
+	}
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".cenvkit.envchain", ".env\n")
+	write(".env", "A=hello\n")
+	write("svc.env", "B=${A}\nC=${MISSING:-def}\n")
+	write("compose.yaml", "services:\n  web:\n    image: busybox\n    env_file: [svc.env]\n")
+
+	cmd := exec.Command("docker", "compose", "config", "--format", "json")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("docker compose config: %v", err)
+	}
+	var composeDoc struct {
+		Services map[string]struct {
+			Environment map[string]string `json:"environment"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &composeDoc); err != nil {
+		t.Fatalf("compose json: %v\n%s", err, out)
+	}
+
+	cenvOut, err := runCenvkit(t, dir, nil, "env-debug", "--show", "effective", "--json")
+	if err != nil {
+		t.Fatalf("cenvkit env-debug: %v\n%s", err, cenvOut)
+	}
+	var rep struct {
+		Services []struct {
+			Service string `json:"service"`
+			Entries []struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			} `json:"entries"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal([]byte(cenvOut), &rep); err != nil {
+		t.Fatalf("cenvkit json: %v\n%s", err, cenvOut)
+	}
+	got := map[string]string{}
+	for _, svc := range rep.Services {
+		if svc.Service != "web" {
+			continue
+		}
+		for _, e := range svc.Entries {
+			got[e.Key] = e.Value
+		}
+	}
+	for _, key := range []string{"B", "C"} {
+		want := composeDoc.Services["web"].Environment[key]
+		if got[key] != want {
+			t.Fatalf("%s: cenvkit=%q compose=%q (interpolation parity broken)", key, got[key], want)
+		}
+	}
 }
