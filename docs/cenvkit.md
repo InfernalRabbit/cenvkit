@@ -143,12 +143,18 @@ while `--json --show …` emits only the requested sections.
 
 Conflicts (exit 2, never a silent fallback): `--value` with any other view or with
 `--json`; `--trace` / `--show trace` without `--var`; `--service` with a view set
-that carries no per-service data. The deprecated single-view flags (`--list`,
+that carries no per-service data.
+
+A filter that matches nothing in a **view** exits **1** with a message on stderr and
+empty stdout — a typo must not read as success in CI. Queries are exempt: `--value`
+prints an empty value and `--trace` answers `not set` for an unset variable, both
+with exit 0. The deprecated single-view flags (`--list`,
 `--files`, `--overview`, `--effective`, `--trace`) stay as aliases and warn on the
 human path only, so machine output remains parseable.
 
-`--redact` masks every value as `<redacted>` while keeping keys, files and layers —
-use it when pasting output into tickets or chat.
+`--redact` masks every value as `<redacted>` while keeping keys, files, layers and
+the `CENVKIT_ENV` header (a tier is metadata, not a secret) — use it when pasting
+output into tickets or chat.
 `--trace` effects are reported for **service fields only** (`services.<name>.<field>`);
 `${VAR}` in top-level `networks:`/`volumes:`/`x-*` is out of scope (the var still
 appears in chain attribution if it is a chain key). The `--effective` view never

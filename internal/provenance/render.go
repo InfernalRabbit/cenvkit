@@ -615,10 +615,16 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 	}
 	_, _ = fmt.Fprintln(w, s.Header(fmt.Sprintf("env overview — %s (mode: overview)", title)))
 	if o.ComposeEnv != "" {
+		// The selector is metadata, not a secret: --redact must not hide which tier
+		// produced this report.
+		selector := s.Value(o.ComposeEnv)
+		if o.Redact {
+			selector = Sanitize(o.ComposeEnv)
+		}
 		if o.ComposeEnvSource != "" {
-			_, _ = fmt.Fprintf(w, "  CENVKIT_ENV = %s (from %s)\n", s.Value(o.ComposeEnv), s.SourceLabel(o.ComposeEnvSource))
+			_, _ = fmt.Fprintf(w, "  CENVKIT_ENV = %s (from %s)\n", selector, s.SourceLabel(o.ComposeEnvSource))
 		} else {
-			_, _ = fmt.Fprintf(w, "  CENVKIT_ENV = %s\n", s.Value(o.ComposeEnv))
+			_, _ = fmt.Fprintf(w, "  CENVKIT_ENV = %s\n", selector)
 		}
 	}
 	if o.ProjectDir != "" {

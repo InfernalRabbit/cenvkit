@@ -205,3 +205,69 @@ func TestEnvDebug_JSONVarFilter(t *testing.T) {
 		t.Fatalf("entry filter lost: %+v", doc.Services[0].Entries)
 	}
 }
+
+// TestEnvDebug_NoMatchExitsOne proves the filter contract: a --var/--service that
+// matches nothing is a failure (exit 1, empty stdout), not a successful empty answer.
+func TestEnvDebug_NoMatchExitsOne(t *testing.T) {
+	t.Setenv("CENVKIT_ENV", "")
+	dir := cascadeFixture(t)
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"view var", []string{"--show", "effective", "--var", "NOT_A_THING"}},
+		{"view var json", []string{"--json", "--var", "NOT_A_THING"}},
+		{"service", []string{"--show", "effective", "--service", "nope"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := runRoot(t, append([]string{"--project-dir", dir, "env-debug"}, c.args...)...)
+			var ee *exitError
+			if !errors.As(err, &ee) || ee.code != 1 {
+				t.Fatalf("want exit 1, got %v (out=%q)", err, out)
+			}
+			if !strings.Contains(ee.Error(), "no match") {
+				t.Fatalf("message must explain the miss, got %q", ee.Error())
+			}
+			if out != "" {
+				t.Fatalf("stdout must stay empty on a miss, got %q", out)
+			}
+		})
+	}
+}
+
+// TestEnvDebug_RedactKeepsSelector: redaction masks values, not the tier metadata.
+func TestEnvDebug_RedactKeepsSelector(t *testing.T) {
+	t.Setenv("CENVKIT_ENV", "")
+	dir := fixtureSelectorDefault(t)
+	out, err := runRoot(t, "--project-dir", dir, "env-debug", "--show", "overview", "--redact")
+	if err != nil {
+		t.Fatalf("overview --redact failed: %v", err)
+	}
+	if !strings.Contains(out, "CENVKIT_ENV = dev") {
+		t.Fatalf("the selector must stay visible under --redact:\n%s", out)
+	}
+}
+
+// TestEnvDebug_QueryKeepsZeroExit: --value and --trace are QUERIES. An unset
+// variable is an answer ("empty" / "not set"), not a failed filter.
+func TestEnvDebug_QueryKeepsZeroExit(t *testing.T) {
+	t.Setenv("CENVKIT_ENV", "")
+	dir := cascadeFixture(t)
+
+	out, err := runRoot(t, "--project-dir", dir, "env-debug", "--var", "NOT_A_THING")
+	if err != nil {
+		t.Fatalf("trace of an unset variable must exit 0: %v", err)
+	}
+	if !strings.Contains(out, "not set") {
+		t.Fatalf("trace should answer not set, got %q", out)
+	}
+
+	out, err = runRoot(t, "--project-dir", dir, "env-debug", "--value", "--var", "NOT_A_THING")
+	if err != nil {
+		t.Fatalf("--value of an unset variable must exit 0: %v", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("--value of an unset variable must print nothing, got %q", out)
+	}
+}

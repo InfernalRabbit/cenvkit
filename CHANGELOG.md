@@ -6,6 +6,17 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-11-19
+
+### Fixed
+
+- A `--var` / `--service` filter that matches nothing in a **view** now exits **1**
+  with a message on stderr and empty stdout; it used to exit 0, which read as
+  success in CI. Queries keep exit 0: `--value` prints an empty value and
+  `--trace` answers `not set` about an unset variable.
+- `--redact` no longer hides the `CENVKIT_ENV` header: the tier is metadata, not a
+  secret.
+
 ## [0.8.0] — 2026-11-19
 
 ### Changed (breaking)

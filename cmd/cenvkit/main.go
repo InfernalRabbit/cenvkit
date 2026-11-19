@@ -606,6 +606,57 @@ func buildDebugRequest(shows []string, varName, service string, jsonOut, redact 
 	return req, nil
 }
 
+// debugFilterStatus reports whether the --var/--service filters matched anything in
+// the loaded model. A filter that matches nothing is a usage-level failure for
+// views -- but NOT for a query: --value returns an empty value for an unset
+// variable (script contract) and --trace answers "not set" about it.
+func debugFilterStatus(rep provenance.Report, varName, service string) (varOK, serviceOK bool) {
+	varMatch := varName == ""
+	if varName != "" {
+		if _, ok := rep.Vars[varName]; ok {
+			varMatch = true
+		} else {
+			for _, se := range rep.Services {
+				for _, e := range se.Entries {
+					if e.Key == varName {
+						varMatch = true
+					}
+				}
+			}
+			for _, l := range rep.Layers {
+				for _, e := range l.Entries {
+					if e.Key == varName {
+						varMatch = true
+					}
+				}
+			}
+		}
+	}
+	serviceMatch := service == ""
+	if service != "" {
+		for _, se := range rep.Services {
+			if se.Service == service {
+				serviceMatch = true
+			}
+		}
+		if !serviceMatch {
+			for _, vt := range rep.Vars {
+				for _, e := range vt.Effects {
+					if e.Service == service {
+						serviceMatch = true
+					}
+				}
+				for _, rd := range vt.RuntimeDefs {
+					if rd.Service == service {
+						serviceMatch = true
+					}
+				}
+			}
+		}
+	}
+	return varMatch, serviceMatch
+}
+
 func newEnvDebugCmd() *cobra.Command {
 	var (
 		shows    []string
@@ -670,6 +721,17 @@ func newEnvDebugCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+			varOK, serviceOK := debugFilterStatus(rep, req.varName, req.service)
+			// A query about one variable (--value, or --trace / bare --var) may
+			// legitimately answer "empty"/"not set" and still exit 0; a VIEW that
+			// was asked to show a key that does not exist must not report success.
+			queryOnly := req.value || (len(req.views) == 1 && req.views[0] == provenance.ViewTrace)
+			if !serviceOK {
+				return &exitError{code: 1, msg: fmt.Sprintf("no match for --service %q in this project", req.service)}
+			}
+			if !queryOnly && !varOK {
+				return &exitError{code: 1, msg: fmt.Sprintf("no match for --var %q in this project", req.varName)}
 			}
 			out := cmd.OutOrStdout()
 			if req.json {
