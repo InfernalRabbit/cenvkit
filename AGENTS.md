@@ -57,7 +57,9 @@
 - Preserve the interpolation/runtime split: YAML `${VAR}` reads the Layer-1
   project chain or shell, **not** a service's `env_file:`. Promote interpolation
   inputs to Layer 1; detect runtime-only gaps with `gap-report` or
-  `env-debug --trace --var V`. `gap-report` exits 0 clean / 1 gaps / 2 no compose file.
+  `env-debug --var V`. `gap-report` exits 0 clean / 1 gaps / 2 no compose file.
+  `env-debug --show deps --var V` walks interpolation edges (`Report.Refs`, built
+  from raw layer values) forward and backward; `--service` does not narrow the graph.
   `compose` does not automatically run gap lint; invoke it separately when needed.
 - Keep blueprint commands routed through `cenvkit compose`: raw Compose loses
   project-chain assembly. `--project-dir` defaults to cwd; subprojects are isolated.

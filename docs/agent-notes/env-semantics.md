@@ -49,7 +49,7 @@ service's `env_file:` but not in Layer-1 → on a real run it falls back to
 ## Order, last-wins, skip-missing
 
 - Line order = load order; the last file wins (last-wins).
-- `.secrets.env` last is a contract INSIDE Layer-1; `env-debug --list` checks it,
+- `.secrets.env` last is a contract INSIDE Layer-1; `env-debug --show list` checks it,
   not `env-files`. There are no cross-layer guarantees: a service's `env_file:`
   can override a chain variable inside the container. Therefore do not reuse
   secret names in service files.
@@ -128,7 +128,7 @@ consumer, pass the resolved `CENVKIT_ENV` explicitly.
 |---|---|
 | `env-debug` / `--list` | Layer-1 files (secrets last) |
 | `--files` | `COMPOSE_ENV_FILES` (Layer-1) + runtime-only `env_file:` per service |
-| `--trace --var V` | the winner, shadowed sources, `Effects`, the gap and the fallback |
+| `--var V` | the winner, shadowed sources, `Effects`, the gap and the fallback |
 | `--value --var V` | the winning value from the interpolation context |
 | `--effective [--service S]` | the service's effective environment with sources |
 | `--overview` | layered breakdown: raw values, `+`/`~`/`·` markers |

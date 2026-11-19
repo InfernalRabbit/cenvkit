@@ -6,6 +6,13 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Documentation
+
+- Docs brought up to the 0.9 contract: `docs/guide.md` §7 rewritten around the
+  cascading `--show` views, filters, `--redact` and `--show deps` (EN + RU);
+  README debug sections and the monorepo blueprint use the new grammar; example
+  fixtures/comments and `AGENTS.md` mention the dependency view.
+
 ## [0.9.1] — 2026-11-19
 
 ### Changed

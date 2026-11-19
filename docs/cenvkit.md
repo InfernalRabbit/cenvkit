@@ -179,7 +179,7 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
   signal. `--print` dumps the env and skips the exec. `--` is required.
 - **`env`** emits that same merged env (chain-derived keys only, sorted) as
   `--format dotenv` (default) / `json` / `shell` — e.g. `eval "$(cenvkit env --format shell)"`.
-  `cenvkit env --expand` == `env-debug --effective` == `docker compose config` (one
+  `cenvkit env --expand` == `env-debug --show effective` == `docker compose config` (one
   expansion engine).
 - **`gap-report`** is the CI/pre-build lint over the same gap `env-debug` detects:
   exit **1** if any `${VAR}` is env_file-only (the var/service/field/fallback; `--json`

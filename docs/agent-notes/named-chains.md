@@ -46,7 +46,7 @@ complete list of layer-1 files; `--chain <name>` picks one per invocation.
 
 `--chain` selects **which files** form the chain. `--project-dir` selects **which
 directory** is treated as the project. They compose: `cenvkit --project-dir web
---chain ci env-debug --files`.
+--chain ci env-debug --show files`.
 
 ## Why bother
 
@@ -89,9 +89,9 @@ keep keys unique across tiers.
 
 ```sh
 cenvkit --chain ci env --format json | jq -r 'keys[]'   # key names only
-cenvkit --chain ci env-debug --files                   # file paths only
+cenvkit --chain ci env-debug --show files                   # file paths only
 cenvkit --chain ci env-debug --json | jq '.files'      # resolved layer-1 list
 ```
 
-`env --format`/`env-debug --trace`/`env-debug --overview` print values verbatim —
+`env --format`/`env-debug --var`/`env-debug --show overview` print values verbatim —
 keep them out of shared logs.

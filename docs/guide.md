@@ -115,7 +115,7 @@ cenvkit compose up -d
 cenvkit compose logs -f web
 
 # 6. When a value surprises you, ask why (and catch the env_file gap).
-cenvkit env-debug --trace --var APP_PORT
+cenvkit env-debug --var APP_PORT
 ```
 
 The golden rule: **in an integrated project, go through `cenvkit compose`** so the
@@ -216,7 +216,7 @@ $ cenvkit env-files
 ```
 
 The exact files (and order) that feed interpolation. Note: **no service env_file
-paths** appear here — they are runtime-only (see `env-debug --files` for those).
+paths** appear here — they are runtime-only (see `env-debug --show files` for those).
 
 ### `cenvkit validate`
 
@@ -272,7 +272,7 @@ cenvkit env --format json             # a JSON object
 eval "$(cenvkit env --format shell)"  # load into the current shell (export …)
 ```
 
-`cenvkit env --expand` is byte-identical to `env-debug --effective` and to
+`cenvkit env --expand` is byte-identical to `env-debug --show effective` and to
 `docker compose config` (one expansion engine). `-e <env>` / `--no-expand` work as
 for `run`.
 
@@ -352,7 +352,7 @@ falls back to `0`** — `env_file:` is runtime-only. The container still receive
 Use `env-debug` to see exactly which case you're in (§7):
 
 ```sh
-$ cenvkit env-debug --files | sed -n '1,12p'
+$ cenvkit env-debug --show files | sed -n '1,12p'
 interpolation (COMPOSE_ENV_FILES):
   /app/.env
   /app/.dev.env
@@ -387,33 +387,50 @@ CENVKIT_ENV=prod cenvkit compose config     # prod overlay + .prod.env tiers
 
 ---
 
-## 7. `env-debug` — provenance & the gap-detector
+## 7. `env-debug` — provenance, filters and the gap-detector
 
 `env-debug` answers *"why does this variable have this value, where does it take
 effect, and what will the container actually get?"* — entirely **in-process (no
-Docker daemon)**. Add `--json` to any mode for the structured `Report`.
+Docker daemon)**.
 
-| Mode | Shows |
+**Views cascade.** `--show` is repeatable; the sections render in the order given
+(no `--show` → the Layer-1 list). Filters narrow every view that has the data.
+
+| `--show …` | Shows |
 |---|---|
-| `--list` (default) | the Layer-1 chain files, in load order (secrets last) |
-| `--files` | two groups: **interpolation** (`COMPOSE_ENV_FILES`, Layer 1) + **runtime-only** (service `env_file:` paths, by service) |
-| `--overview` | the whole env **layering** at a glance: per-file accumulation walk (`+`/`~`/`·` markers, raw values) + per-service `env_file:` layers + `inline environment:`, with `⚠ gap` lines |
-| `--trace --var V` | if `V` is in the chain: its winner, shadowed files, and effects. If `V` is env_file-only: the **gap** (falls back at the run) + the runtime def + a fix |
-| `--effective [--service S]` | each service's **final container env**, with the source of every value (`env_file:` vs inline `environment:`) |
-| `--value --var V` | `V`'s interpolation value, one line (empty if env_file-only) |
+| `list` (default) | the Layer-1 chain files, in load order (secrets last) |
+| `files` | two groups: **interpolation** (`COMPOSE_ENV_FILES`, Layer 1) + **runtime-only** (service `env_file:` paths, by service) |
+| `overview` | the env **layering** at a glance: per-file walk (`+`/`~`/`·`, raw values) + per-service `env_file:` layers + `inline environment:`, with `⚠ gap` lines |
+| `effective` | each service **final container env**, with the source of every value (`env_file:` vs inline `environment:`) |
+| `trace` | one variable story: winner, shadowed files, effects — or the **gap** when it is env_file-only |
+| `deps` | the dependency **closure** of `--var`: definitions, forward/reverse references, services that receive it |
 
-### `--trace` — a chain variable (no gap)
+`--value --var V` is a non-cascading primitive: it prints the bare interpolation
+value (empty when `V` is env_file-only) and cannot be combined with other views.
+
+| Filter | `list` | `files` | `overview` | `effective` | `trace` | `deps` | `json` |
+|---|---|---|---|---|---|---|---|
+| `--var KEY` | files that declare it | same | its lines only | its entry only | the variable | required | `vars` + entries |
+| `--service S` | - | that service | that service | that service | its effects | - | that block |
+
+Defaults: `--var V` alone means `--show trace`; `--service S` alone means
+`--show effective`; `--json` alone keeps the whole report, while `--json --show …`
+emits only the requested sections. Impossible combinations exit **2**; a view whose
+filter matches nothing exits **1** (a query such as `--trace`/`--value` still
+exits 0 and answers `not set`/empty).
+
+### `trace` — a chain variable (no gap)
 
 ```sh
-$ cenvkit env-debug --trace --var COMPOSE_PROJECT_NAME
+$ cenvkit env-debug --var COMPOSE_PROJECT_NAME
 COMPOSE_PROJECT_NAME=monorepo
   winner:     /app/.env (layer1)
 ```
 
-### `--trace` — the env_file gap
+### `trace` — the env_file gap
 
 ```sh
-$ cenvkit env-debug --trace --var WEB_PORT
+$ cenvkit env-debug --var WEB_PORT
 WEB_PORT
   interpolation: NOT in the Layer-1 chain -> ${WEB_PORT} falls back at run time
   runtime:       /app/web/.web.env -> WEB_PORT=18080  (service `web` container env only)
@@ -425,20 +442,46 @@ WEB_PORT
 That tells you: `WEB_PORT` is **not** in the interpolation chain, so every
 `${WEB_PORT}` in the YAML falls back at the run; it *is* defined in `web/.web.env`
 (value 18080) but that only reaches the `web` container; and the fix is to promote
-it to Layer 1 (or accept that it's runtime-only).
+it to Layer 1 (or accept that it is runtime-only).
 
-### `--overview` — the whole layering at a glance
+### `deps` — definitions and every consumer
 
-When you want the full picture — every file's contribution and what it shadows —
-`--overview` walks each file with `+` new / `~` override (`old → new`) / `·` repeat
-markers, showing **raw** values (`${...}` left unexpanded). The interpolation chain
-(Layer 1) and the runtime-only service `env_file:` layers are separate sections;
-`inline environment:` is the last layer per service (it wins), and a `⚠ gap:` line
-flags any `${VAR}` that the run will fall back on. (This restores the sh kit's
-`env-debug-diff` overview, correct under v3.)
+`--show deps --var V` is the reverse question no filter can answer: where `V` is
+defined, what its own value needs, which keys reference it (transitively) and which
+services receive it.
 
 ```sh
-$ cenvkit env-debug --overview
+$ cenvkit env-debug --show deps --var LIVEKIT_KEY --redact
+LIVEKIT_KEY
+  defined in:
+    .secrets.env (layer1)
+    services/livekit-api/.livekit-api.env (env_file, service livekit-api)
+    services/token-exchange/.token-exchange.env (env_file, service token-exchange)
+  depends on:
+    LKA_LIVEKIT_KEY (depth 1)
+    TOKEN_EXCHANGE_LIVEKIT_KEY (depth 1)
+  needed by:
+    .env:LKA_LIVEKIT_KEY (depth 1)
+    .env:TOKEN_EXCHANGE_LIVEKIT_KEY (depth 1)
+    livekit/.livekit.env:KEY (depth 1, service livekit)
+  consumed by:
+    service livekit-api via services/livekit-api/.livekit-api.env
+    service token-exchange via services/token-exchange/.token-exchange.env
+```
+
+Edges come from the raw values of every layer: `${VAR}`, `${VAR:-def}`, `$VAR` and
+nested defaults (`${A:-${B}}`). An unterminated `${A` stays literal, so no edge is
+invented. `--service` does not narrow the graph.
+
+### `overview` — the whole layering at a glance
+
+When you want the full picture — every file contribution and what it shadows —
+`--show overview` walks each file with `+` new / `~` override (`old → new`) / `·`
+repeat markers, showing **raw** values (`${...}` left unexpanded). Combine it with
+`--var` to narrow the walk to one key.
+
+```sh
+$ cenvkit env-debug --show overview
 env overview — myproject (mode: overview)
   CENVKIT_ENV = dev (from .env)
   Project dir = /app
@@ -466,16 +509,15 @@ Runtime-only — service env_file: (NOT interpolated)
 ```
 
 Read it as: the chain sets `SITE_URL` in `.env` and **overrides it** in `.dev.env`
-(the `~` marker — last-wins within the Layer-1 chain); `web`'s
-container gets `WEB_PORT=18080` from its `env_file:` but the inline `environment:`
-overrides it to the `${WEB_PORT:-0}` fallback (`0`) — and because `WEB_PORT` is
-not in the chain, every `${WEB_PORT}` in the YAML falls back at the run (the gap).
-Add `--json` for the structured `layers` array.
+(the `~` marker — last-wins within the Layer-1 chain); `web` container gets
+`WEB_PORT=18080` from its `env_file:` but the inline `environment:` overrides it to
+the `${WEB_PORT:-0}` fallback (`0`) — and because `WEB_PORT` is not in the chain,
+every `${WEB_PORT}` in the YAML falls back at the run (the gap).
 
-### `--effective` — a service's final container env, with sources
+### `effective` — a service final container env, with sources
 
 ```sh
-$ cenvkit env-debug --effective --service web
+$ cenvkit env-debug --show effective --service web
 service web:
   IS_DEV=true       <- (inline environment:) (environment)
   STACK_TIER=dev    <- (inline environment:) (environment)
@@ -488,19 +530,18 @@ This is the **truth about the container**: `WEB_DEBUG` comes from an env_file;
 the `:-0` fallback), which **overrides** the `18080` in `web/.web.env`. Inline
 `environment:` always wins over `env_file:`, and inline `${VAR}` interpolates
 against the chain — so `env-debug` shows what the container *actually* gets, never
-a value the run won't produce.
+a value the run will not produce.
 
-### `--json` — the structured Report
+### `--redact` and `--json`
 
-```sh
-cenvkit env-debug --trace --var WEB_PORT --json
-```
-
-Carries `files` (Layer-1 `COMPOSE_ENV_FILES`), `chain_files`, per-var
-`{value, in_chain, winner, overridden, runtime_defs, effects[], gap}`, and
-per-service `services[]` (entries with sources + the declared `env_files`). Effects
-are reported for **service fields only** (`services.<name>.<field>`).
-
+`--redact` masks every value as `<redacted>` while keeping keys, files, layers and
+the `CENVKIT_ENV` header — use it before pasting output anywhere. `--json` carries
+`files` (Layer-1 `COMPOSE_ENV_FILES`), `chain_files`, per-var
+`{value, in_chain, winner, overridden, runtime_defs, effects[], gap}`,
+per-service `services[]` (entries with sources + the declared `env_files`) and,
+with `--show deps`, a `deps` section. Without `--show` it keeps the whole
+document; with `--show` it emits only the requested sections. Effects are reported
+for **service fields only** (`services.<name>.<field>`).
 ---
 
 ## 8. CI
@@ -554,7 +595,7 @@ catch env_file gaps — without Docker:
 ```sh
 test "$(cenvkit env-debug --value --var SITE_URL)" = "example.com"
 # Fail CI if a var your YAML references is only in a service env_file (a gap):
-cenvkit env-debug --trace --var APP_PORT --json | grep -q '"gap": *true' \
+cenvkit env-debug --var APP_PORT --json | grep -q '"gap": *true' \
   && { echo "APP_PORT is env_file-only — promote it to the chain"; exit 1; } || true
 ```
 
@@ -599,25 +640,25 @@ cenvkit env-debug --trace --var APP_PORT --json | grep -q '"gap": *true' \
 ## 10. Troubleshooting
 
 **`${VAR}` resolves to its `:-default` fallback.**
-Run `cenvkit env-debug --trace --var VAR`. If it shows a **gap** (`NOT in the
+Run `cenvkit env-debug --var VAR`. If it shows a **gap** (`NOT in the
 Layer-1 chain`), the value lives only in a service `env_file:` — that's runtime-only
 and never feeds interpolation. Fix: add `VAR` to the Layer-1 chain (e.g. `.env`),
 or stop referencing it as `${VAR}` in YAML.
 
 **A container value isn't what I set in the env_file.**
-`cenvkit env-debug --effective --service S` shows the final container env with the
+`cenvkit env-debug --show effective --service S` shows the final container env with the
 source of each key. Remember inline `environment:` overrides `env_file:`, and inline
 `${VAR}` interpolates against the chain (so an inline `"${X:-0}"` can override an
 env_file's `X` with the fallback).
 
 **`cenvkit env-files` doesn't list my service `env_file:`.**
 By design — `env-files` is Layer-1 (`COMPOSE_ENV_FILES`) only. Service env_files are
-runtime-only; see them via `cenvkit env-debug --files` (the runtime-only group).
+runtime-only; see them via `cenvkit env-debug --show files` (the runtime-only group).
 
 **My secret got overridden.**
 `.secrets.env` is last *within the Layer-1 chain* (it wins there). A service
 `env_file:` can no longer affect interpolation, so it can't clobber a secret at
-`${VAR}` time. If a value is still wrong, `env-debug --trace --var VAR` shows the
+`${VAR}` time. If a value is still wrong, `env-debug --var VAR` shows the
 chain winner.
 
 **`cenvkit compose` / `validate` fails with "Cannot connect to the Docker daemon".**
@@ -654,10 +695,10 @@ Color is **automatic and safe**:
   pure for tooling.
 
 ```sh
-cenvkit env-debug --overview                 # colored on a terminal
-cenvkit env-debug --overview --color=never   # force plain
-cenvkit env-debug --overview --color=always | less -R   # keep color through a pager
-NO_COLOR=1 cenvkit env-debug --overview      # plain via the env convention
+cenvkit env-debug --show overview                 # colored on a terminal
+cenvkit env-debug --show overview --color=never   # force plain
+cenvkit env-debug --show overview --color=always | less -R   # keep color through a pager
+NO_COLOR=1 cenvkit env-debug --show overview      # plain via the env convention
 ```
 
 ---

@@ -89,7 +89,7 @@ chain.** Full reference: [`docs/cenvkit.md`](docs/cenvkit.md).
 
 ```sh
 cenvkit env-files                          # the resolved COMPOSE_ENV_FILES (Layer-1 chain)
-cenvkit env-debug --trace --var APP_PORT   # in the chain, or an env_file gap?
+cenvkit env-debug --var APP_PORT   # in the chain, or an env_file gap?
 cenvkit gap-report                         # CI/pre-build lint: non-zero if any ${VAR} is env_file-only
 ```
 
@@ -109,14 +109,14 @@ eval "$(cenvkit env --format shell)"   # load it into the current shell
 
 `run` / `env` expand `${VAR}` / `${VAR:-def}` via compose-go's own dotenv engine, so
 `cenvkit env --expand` is **byte-identical** to what `docker compose` interpolates
-(and to `env-debug --effective`). `-e <env>` overrides `CENVKIT_ENV` for one call;
+(and to `env-debug --show effective`). `-e <env>` overrides `CENVKIT_ENV` for one call;
 shell-set vars win over the chain (compose parity).
 
 If a wrapper calls `docker compose --env-file <path>`, pass the same path as
 `cenvkit … --env-file <path>` (or list it in `.cenvkit.envchain`) so the debug and
 gap views see the values the run actually interpolates.
 
-> ⚠️ `env`, `run --print` and `env-debug --value|--trace` print values **verbatim,
+> ⚠️ `env`, `run --print` and `env-debug --value|--var` print values **verbatim,
 > including secrets**. That is the point — but don't pipe them into shared logs.
 
 **Named chains** — give `.cenvkit.envchain` optional `[name]` sections and pick one
@@ -157,7 +157,7 @@ real, include-aware model and enumerates those paths, but only to power `env-deb
   service env_file:  ──►  container runtime env only  +  env-debug gap-detector
 ```
 
-See `cenvkit env-files` for the chain, and `cenvkit env-debug --files` for the
+See `cenvkit env-files` for the chain, and `cenvkit env-debug --show files` for the
 runtime-only env_file paths.
 
 ### Named chains
@@ -226,7 +226,7 @@ The flip side of subproject *isolation* is the **unified stack**: a root compose
 that `include:`s each subproject, run as one stack from the root. cenvkit loads the
 real, include-aware model, so `env-debug` sees the whole project. Note the rule: a
 `${WEB_PORT}` declared only in `web/.web.env` (a service `env_file:`) **falls back**
-at the root — `env_file:` is runtime-only. `cenvkit env-debug --trace --var WEB_PORT`
+at the root — `env_file:` is runtime-only. `cenvkit env-debug --var WEB_PORT`
 flags the gap; promote `WEB_PORT` to the Layer-1 chain if you need it interpolated.
 
 Runnable blueprint: [`examples/monorepo/`](examples/monorepo/).
@@ -237,17 +237,24 @@ Runnable blueprint: [`examples/monorepo/`](examples/monorepo/).
 
 `cenvkit env-debug` is **provenance-backed and daemon-free**: it loads the
 compose model in-process (compose-go), with no `docker compose` shell-out, and
-never hardcodes your variable or service names. Add `--json` to any mode for the
-structured report (tooling/CI).
+never hardcodes your variable or service names.
 
-| Mode | What it shows |
+**Views cascade**: repeat `--show` and the sections render in the order given
+(no `--show` → the Layer-1 list). Filters narrow every view with the data.
+
+| `--show …` | What it shows |
 |---|---|
-| `--list` (default) | the Layer-1 chain files, in load order (secrets last) |
-| `--files` | two groups: interpolation (`COMPOSE_ENV_FILES`, Layer 1) + runtime-only (service `env_file:` paths) |
-| `--overview` | per-file layering walk (`+`/`~`/`·` markers, raw values) + per-service `env_file:` layers + `inline environment:`, with `⚠ gap` lines |
-| `--effective [--service S]` | each service's effective env, with the source of every value (`env_file:` vs inline `environment:`) |
-| `--trace --var NAME` | NAME's chain winner + where `${NAME}` took effect — or the **gap** (NAME is only in a service `env_file:`, so the run falls back) |
-| `--value --var NAME` | NAME's winning value, one line (for scripts) |
+| `list` (default) | the Layer-1 chain files, in load order (secrets last) |
+| `files` | interpolation set (`COMPOSE_ENV_FILES`) + runtime-only service `env_file:` paths |
+| `overview` | per-file layering (`+`/`~`/`·`, raw values) + per-service `env_file:` layers + `inline environment:`, with `⚠ gap` lines |
+| `effective` | each service effective env, with the source of every value |
+| `trace` | one variable winner/effects — or the **gap** (env_file-only, so the run falls back) |
+| `deps` | dependency closure of `--var`: definitions, forward/reverse references, consumers |
+
+`--var NAME` filters every view (and alone implies `trace`); `--service S` narrows
+the per-service views (and alone implies `effective`). `--redact` masks values
+before you paste output anywhere. `--json --show …` emits only those sections;
+plain `--json` keeps the whole report.
 
 Output is **colored** on a terminal (markers, headers, gaps) and **plain** when
 piped / `--json` / `NO_COLOR` / CI — control with `--color=auto|always|never`.
@@ -255,12 +262,12 @@ piped / `--json` / `NO_COLOR` / CI — control with `--color=auto|always|never`.
 Full reference: [`docs/cenvkit.md`](docs/cenvkit.md).
 
 ```sh
-cenvkit env-debug                              # the chain, in load order
-cenvkit env-debug --trace --var DATABASE_HOST  # who set/shadowed DATABASE_HOST
-cenvkit env-debug --effective --service web     # final values compose will use for web
-cenvkit env-debug --trace --var APP_PORT --json # the whole resolution, as JSON
+cenvkit env-debug                                  # the chain, in load order
+cenvkit env-debug --var DATABASE_HOST              # who set/shadowed it
+cenvkit env-debug --show files --show effective --service web
+cenvkit env-debug --show deps --var LIVEKIT_KEY --redact  # definitions + every consumer
+cenvkit env-debug --json --show effective --var APP_PORT
 ```
-
 ---
 
 ## Requirements

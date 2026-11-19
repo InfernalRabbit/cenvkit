@@ -8,7 +8,7 @@
 #
 # REPORTS_PORT lives ONLY in this subproject's env_file (.reports.env) —
 # runtime-only (container env). ${REPORTS_PORT} falls back to :-0 at
-# compose-time interpolation. `cenvkit env-debug --trace --var REPORTS_PORT`
+# compose-time interpolation. `cenvkit env-debug --var REPORTS_PORT`
 # shows the gap. Add REPORTS_PORT to the Layer-1 chain to feed interpolation.
 # ============================================
 

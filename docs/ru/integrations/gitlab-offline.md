@@ -149,7 +149,7 @@ curl -sS -o /dev/null -w 'project: %{http_code}\n' \
 5. никогда не кладите его в `cache: paths: [.]`;
 6. `git check-ignore -q .secrets.env` как дешёвая защита от отредактированного
    `.gitignore`;
-7. в этом джобе используйте только `gap-report` / `env-debug --files` — `env`,
+7. в этом джобе используйте только `gap-report` / `env-debug --show files` — `env`,
    `run --print` и `env-debug --trace` печатают значения дословно.
 
 ## 7. Поднятие закреплённой версии

@@ -46,7 +46,7 @@
 
 `--chain` выбирает, **какие файлы** образуют цепочку. `--project-dir` выбирает,
 **какой каталог** считается проектом. Они складываются:
-`cenvkit --project-dir web --chain ci env-debug --files`.
+`cenvkit --project-dir web --chain ci env-debug --show files`.
 
 ## Зачем это нужно
 
@@ -89,9 +89,9 @@ data/.compiled.env      # генерируется; отсутствует => п
 
 ```sh
 cenvkit --chain ci env --format json | jq -r 'keys[]'   # только имена ключей
-cenvkit --chain ci env-debug --files                   # только пути файлов
+cenvkit --chain ci env-debug --show files                   # только пути файлов
 cenvkit --chain ci env-debug --json | jq '.files'      # резолвнутый список Layer-1
 ```
 
-`env --format`/`env-debug --trace`/`env-debug --overview` печатают значения как
+`env --format`/`env-debug --var`/`env-debug --show overview` печатают значения как
 есть — держи их вне общих логов.

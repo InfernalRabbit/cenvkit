@@ -71,7 +71,7 @@ the SAME `resolveComposeFiles` so they cannot drift apart.
 | `dotenv.ReadFile(path, lookupFn)` | `provenance.go` | returns a map; with a `nil` lookup it writes warnings about unresolved `${VAR}` to stderr — pass a closure |
 
 - The compose-go parser returns an UNORDERED map and expands `${...}`; for
-  `--overview` and `--no-expand` there is our own `engine.ParseOrderedLiteral`.
+  `--show overview` and `--no-expand` there is our own `engine.ParseOrderedLiteral`.
 - `GetEnvFromFile` unconditionally logs `level=warning ... variable is not set`
   (logrus, cannot be disabled): the value is right, but `run`/`env` stderr is
   noisy.

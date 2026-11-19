@@ -15,7 +15,7 @@
 # ${WEB_PORT} / ${API_PORT}, but those vars live ONLY in the subprojects' own
 # service env_file: (web/.web.env, api/.api.env). Those env_file:s are
 # runtime-only — they do NOT feed ${VAR} interpolation. So ${WEB_PORT} and
-# ${API_PORT} fall back to :-0 at the run. Use `cenvkit env-debug --trace --var
+# ${API_PORT} fall back to :-0 at the run. Use `cenvkit env-debug --var
 # WEB_PORT` to see the gap; promote a port to the Layer-1 chain (.env) if you
 # need it to interpolate at compose time.
 # ============================================

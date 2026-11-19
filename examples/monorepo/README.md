@@ -70,7 +70,7 @@ cenvkit env-files
 #   …/examples/monorepo/.dev.env
 
 # 3. See BOTH groups — interpolation chain AND runtime-only service env_files:
-cenvkit env-debug --files
+cenvkit env-debug --show files
 #   interpolation (COMPOSE_ENV_FILES):
 #     …/examples/monorepo/.env
 #     …/examples/monorepo/.dev.env
@@ -129,7 +129,7 @@ directory.
 
 ```sh
 # Trace WEB_PORT: see the gap (runtime-only, falls back at interpolation time).
-cenvkit env-debug --trace --var WEB_PORT
+cenvkit env-debug --var WEB_PORT
 # WEB_PORT
 #   interpolation: NOT in the Layer-1 chain -> ${WEB_PORT} falls back at run time
 #   runtime:       …/web/.web.env -> WEB_PORT=18080  (service `web` container env only)
@@ -138,15 +138,18 @@ cenvkit env-debug --trace --var WEB_PORT
 #   fix:   add WEB_PORT to the Layer-1 chain (e.g. .env), or use it runtime-only.
 
 # Show the final container env for the web service (with sources):
-cenvkit env-debug --effective --service web
+cenvkit env-debug --show effective --service web
 # service web:
 #   IS_DEV=true	<- (inline environment:) (environment)
 #   STACK_TIER=dev	<- (inline environment:) (environment)
 #   WEB_DEBUG=true	<- …/web/.web.dev.env (env_file)
 #   WEB_PORT=0	<- (inline environment:) (environment)
+
+# Definitions, transitive references and every consumer in one look:
+cenvkit env-debug --show deps --var WEB_PORT
 ```
 
-The `--effective` output shows the **truth about the container**: `WEB_PORT=0`
+The `--show effective` output shows the **truth about the container**: `WEB_PORT=0`
 comes from the inline `environment: WEB_PORT: "${WEB_PORT:-0}"` — interpolated
 against the Layer-1 chain, which does not have `WEB_PORT`, so the `:-0` fallback
 wins. That overrides the `18080` in `web/.web.env` (inline `environment:` always
@@ -154,7 +157,7 @@ wins over `env_file:`).
 
 **To make `${WEB_PORT}` interpolate** (e.g. to publish the real port): add
 `WEB_PORT=18080` to the Layer-1 chain (root `.env` or `web/.env`). Then both
-`env-files` and `env-debug --trace` will show it as a chain variable with no gap.
+`env-files` and `env-debug --var` will show it as a chain variable with no gap.
 
 ---
 
@@ -187,7 +190,7 @@ COMPOSE_PROFILES=tools cenvkit compose config --services # api, reports, tools, 
 
 The acceptance suite runs this whole blueprint end-to-end against a freshly
 built `cenvkit` binary — confirming that `env-files` returns Layer-1 only, that
-`${WEB_PORT}` falls back to `0` (runtime-only gap), and that `env-debug --trace`
+`${WEB_PORT}` falls back to `0` (runtime-only gap), and that `env-debug --var`
 reports the gap correctly:
 
 ```sh

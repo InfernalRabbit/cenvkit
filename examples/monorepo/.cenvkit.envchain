@@ -7,7 +7,7 @@
 #
 # Subproject service env_file: paths (web/.web.env, api/.api.env) are NOT listed
 # here — they are runtime-only (per-service, native Docker container env). They
-# do NOT feed ${VAR} interpolation. `cenvkit env-debug --files` shows both groups:
+# do NOT feed ${VAR} interpolation. `cenvkit env-debug --show files` shows both groups:
 # Layer-1 interpolation files and runtime-only service env_file: paths by service.
 # ============================================
 

@@ -92,7 +92,7 @@ fallback), показывает runtime-значение и рекомендуе
 
 ```sh
 cenvkit env-files                          # the resolved COMPOSE_ENV_FILES (Layer-1 chain)
-cenvkit env-debug --trace --var APP_PORT   # in the chain, or an env_file gap?
+cenvkit env-debug --var APP_PORT   # in the chain, or an env_file gap?
 cenvkit gap-report                         # CI/pre-build lint: non-zero if any ${VAR} is env_file-only
 ```
 
@@ -112,7 +112,7 @@ eval "$(cenvkit env --format shell)"   # load it into the current shell
 
 `run` / `env` раскрывают `${VAR}` / `${VAR:-def}` через собственный dotenv-движок
 compose-go, поэтому `cenvkit env --expand` **байт-в-байт** совпадает с тем, что
-интерполирует `docker compose` (и с `env-debug --effective`). `-e <env>`
+интерполирует `docker compose` (и с `env-debug --show effective`). `-e <env>`
 переопределяет `CENVKIT_ENV` на один вызов; переменные, заданные в shell,
 побеждают chain (паритет с compose).
 
@@ -120,7 +120,7 @@ compose-go, поэтому `cenvkit env --expand` **байт-в-байт** со�
 `cenvkit … --env-file <path>` (или внесите его в `.cenvkit.envchain`), чтобы
 диагностика видела те значения, которые реально интерполируются при запуске.
 
-> ⚠️ `env`, `run --print` и `env-debug --value|--trace` печатают значения
+> ⚠️ `env`, `run --print` и `env-debug --value|--var` печатают значения
 > **дословно, включая секреты**. В этом и смысл — но не направляйте их в общие
 > логи.
 
@@ -164,7 +164,7 @@ compose-go, поэтому `cenvkit env --expand` **байт-в-байт** со�
   service env_file:  ──►  container runtime env only  +  env-debug gap-detector
 ```
 
-Смотрите `cenvkit env-files` — там chain, и `cenvkit env-debug --files` — там пути
+Смотрите `cenvkit env-files` — там chain, и `cenvkit env-debug --show files` — там пути
 runtime-only env_file.
 
 ### Именованные chain
@@ -234,7 +234,7 @@ cenvkit --project-dir web env-files  # same, without changing directory
 корня. cenvkit загружает настоящую include-aware модель, поэтому `env-debug` видит
 весь проект. Заметьте правило: `${WEB_PORT}`, объявленный только в `web/.web.env`
 (сервисный `env_file:`), **откатывается к fallback** в корне — `env_file:` работает
-только в runtime. `cenvkit env-debug --trace --var WEB_PORT` помечает gap;
+только в runtime. `cenvkit env-debug --var WEB_PORT` помечает gap;
 продвиньте `WEB_PORT` в Layer-1 chain, если он нужен для интерполяции.
 
 Запускаемый блюпринт: [`examples/monorepo/`](examples/monorepo/).
@@ -245,18 +245,25 @@ cenvkit --project-dir web env-files  # same, without changing directory
 
 `cenvkit env-debug` **опирается на provenance и работает без демона**: он
 загружает compose-модель в процессе (compose-go), без вызова `docker compose`
-через shell, и никогда не хардкодит имена ваших переменных или сервисов. Добавьте
-`--json` к любому режиму, чтобы получить структурированный отчёт (для
-инструментов/CI).
+через shell, и никогда не хардкодит имена ваших переменных или сервисов.
 
-| Режим | Что показывает |
+**Виды выводятся каскадом**: повторяйте `--show`, и секции идут в заданном
+порядке (без `--show` — список Layer-1). Фильтры сужают каждый вид, у которого
+есть данные.
+
+| `--show …` | Что показывает |
 |---|---|
-| `--list` (по умолчанию) | файлы Layer-1 chain в порядке загрузки (секреты последними) |
-| `--files` | две группы: интерполяция (`COMPOSE_ENV_FILES`, Layer 1) + runtime-only (пути сервисных `env_file:`) |
-| `--overview` | пофайловый обход слоёв (маркеры `+`/`~`/`·`, сырые значения) + слои `env_file:` по сервисам + `inline environment:`, со строками `⚠ gap` |
-| `--effective [--service S]` | эффективное окружение каждого сервиса с источником каждого значения (`env_file:` или inline `environment:`) |
-| `--trace --var NAME` | победитель `NAME` в chain + где `${NAME}` вступил в силу — или **gap** (`NAME` есть только в сервисном `env_file:`, поэтому запуск откатывается к fallback) |
-| `--value --var NAME` | победившее значение `NAME`, одна строка (для скриптов) |
+| `list` (по умолчанию) | файлы Layer-1 chain в порядке загрузки (секреты последними) |
+| `files` | набор интерполяции (`COMPOSE_ENV_FILES`) + runtime-only пути сервисных `env_file:` |
+| `overview` | пофайловые слои (`+`/`~`/`·`, сырые значения) + слои `env_file:` по сервисам + `inline environment:`, со строками `⚠ gap` |
+| `effective` | эффективное окружение каждого сервиса с источником каждого значения |
+| `trace` | победитель и эффекты одной переменной — или **gap** (только в env_file, запуск откатывается) |
+| `deps` | замыкание зависимостей `--var`: определения, прямые/обратные ссылки, потребители |
+
+`--var NAME` фильтрует все виды (а без вида подразумевает `trace`); `--service S`
+сужает per-service виды (и подразумевает `effective`). `--redact` скрывает
+значения перед копированием вывода. `--json --show …` печатает только эти секции;
+просто `--json` сохраняет полный отчёт.
 
 Вывод **цветной** на терминале (маркеры, заголовки, gap) и **простой** при
 передаче через пайп / `--json` / `NO_COLOR` / CI — управляется
@@ -265,12 +272,12 @@ cenvkit --project-dir web env-files  # same, without changing directory
 Полный справочник: [`docs/ru/cenvkit.md`](docs/ru/cenvkit.md).
 
 ```sh
-cenvkit env-debug                              # the chain, in load order
-cenvkit env-debug --trace --var DATABASE_HOST  # who set/shadowed DATABASE_HOST
-cenvkit env-debug --effective --service web     # final values compose will use for web
-cenvkit env-debug --trace --var APP_PORT --json # the whole resolution, as JSON
+cenvkit env-debug                                  # the chain, in load order
+cenvkit env-debug --var DATABASE_HOST              # who set/shadowed it
+cenvkit env-debug --show files --show effective --service web
+cenvkit env-debug --show deps --var LIVEKIT_KEY --redact  # definitions + every consumer
+cenvkit env-debug --json --show effective --var APP_PORT
 ```
-
 ---
 
 ## Требования

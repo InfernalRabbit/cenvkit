@@ -203,8 +203,8 @@ demo: dev-build ## Build + run gap-detector showcase on a temp copy of examples/
 	echo "==> cenvkit env-debug --files (interpolation set + runtime-only service env_file paths)"; \
 	./$(DEV_BIN) --project-dir $$DEMO_DIR env-debug --files; \
 	echo ""; \
-	echo "==> cenvkit env-debug --trace --var WEB_PORT (gap-detector: WEB_PORT is env_file-only)"; \
-	./$(DEV_BIN) --project-dir $$DEMO_DIR env-debug --trace --var WEB_PORT; \
+	echo "==> cenvkit env-debug --var WEB_PORT (gap-detector: WEB_PORT is env_file-only)"; \
+	./$(DEV_BIN) --project-dir $$DEMO_DIR env-debug --var WEB_PORT; \
 	echo ""; \
 	echo "==> cenvkit env-debug --effective --service web (final container env for web)"; \
 	./$(DEV_BIN) --project-dir $$DEMO_DIR env-debug --effective --service web; \

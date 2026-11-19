@@ -186,7 +186,7 @@ chain). Представление `--effective` никогда не сообщ�
 - **`env`** выводит то же объединённое окружение (только ключи из chain,
   отсортированы) в `--format dotenv` (по умолчанию) / `json` / `shell` — например,
   `eval "$(cenvkit env --format shell)"`.
-  `cenvkit env --expand` == `env-debug --effective` == `docker compose config`
+  `cenvkit env --expand` == `env-debug --show effective` == `docker compose config`
   (один движок раскрытия).
 - **`gap-report`** — это CI/pre-build линт по тому же gap, который обнаруживает
   `env-debug`: код **1**, если какой-либо `${VAR}` есть только в env_file

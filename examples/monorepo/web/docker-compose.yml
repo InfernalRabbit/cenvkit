@@ -9,7 +9,7 @@
 # WEB_PORT is declared ONLY in this subproject's service env_file: (.web.env).
 # That file is runtime-only (container env) — NOT folded into COMPOSE_ENV_FILES.
 # So ${WEB_PORT:-0} falls back to 0 at compose-time interpolation.
-# `cenvkit env-debug --trace --var WEB_PORT` surfaces the gap; add WEB_PORT to
+# `cenvkit env-debug --var WEB_PORT` surfaces the gap; add WEB_PORT to
 # the Layer-1 chain (.env) to make it feed ${VAR} interpolation.
 # ============================================
 

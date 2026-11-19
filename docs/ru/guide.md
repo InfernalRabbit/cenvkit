@@ -116,7 +116,7 @@ cenvkit compose up -d
 cenvkit compose logs -f web
 
 # 6. When a value surprises you, ask why (and catch the env_file gap).
-cenvkit env-debug --trace --var APP_PORT
+cenvkit env-debug --var APP_PORT
 ```
 
 Золотое правило: **в интегрированном проекте идите через `cenvkit compose`**, чтобы
@@ -220,7 +220,7 @@ $ cenvkit env-files
 
 Точные файлы (и порядок), которые питают интерполяцию. Заметьте: **пути сервисных
 env_file здесь не появляются** — они только runtime (смотрите их через
-`env-debug --files`).
+`env-debug --show files`).
 
 ### `cenvkit validate`
 
@@ -279,7 +279,7 @@ cenvkit env --format json             # a JSON object
 eval "$(cenvkit env --format shell)"  # load into the current shell (export …)
 ```
 
-`cenvkit env --expand` байт-в-байт совпадает с `env-debug --effective` и с
+`cenvkit env --expand` байт-в-байт совпадает с `env-debug --show effective` и с
 `docker compose config` (один движок раскрытия). `-e <env>` / `--no-expand`
 работают как в `run`.
 
@@ -362,7 +362,7 @@ include:
 Используйте `env-debug`, чтобы увидеть, какой это случай (§7):
 
 ```sh
-$ cenvkit env-debug --files | sed -n '1,12p'
+$ cenvkit env-debug --show files | sed -n '1,12p'
 interpolation (COMPOSE_ENV_FILES):
   /app/.env
   /app/.dev.env
@@ -397,34 +397,51 @@ CENVKIT_ENV=prod cenvkit compose config     # prod overlay + .prod.env tiers
 
 ---
 
-## 7. `env-debug` — provenance и gap-детектор
+## 7. `env-debug` — provenance, фильтры и gap-детектор
 
 `env-debug` отвечает на вопрос *«почему у этой переменной такое значение, где оно
 вступает в силу и что реально получит контейнер?»* — целиком **в процессе (без
-демона Docker)**. Добавьте `--json` к любому режиму, чтобы получить
-структурированный `Report`.
+демона Docker)**.
 
-| Режим | Что показывает |
+**Виды выводятся каскадом.** `--show` можно повторять; секции идут в заданном
+порядке (без `--show` — список Layer-1). Фильтры сужают каждый вид, у которого
+есть данные.
+
+| `--show …` | Что показывает |
 |---|---|
-| `--list` (по умолчанию) | файлы Layer-1 chain в порядке загрузки (секреты последними) |
-| `--files` | две группы: **интерполяция** (`COMPOSE_ENV_FILES`, Layer 1) + **runtime-only** (пути сервисных `env_file:`, по сервисам) |
-| `--overview` | все **слои** env с одного взгляда: накопление по файлам (маркеры `+`/`~`/`·`, сырые значения) + слои `env_file:` по сервисам + `inline environment:`, со строками `⚠ gap` |
-| `--trace --var V` | если `V` в chain: победитель, затенённые файлы и эффекты. Если `V` только в env_file: **gap** (откат при запуске) + runtime-определение + исправление |
-| `--effective [--service S]` | **финальное окружение контейнера** каждого сервиса с источником каждого значения (`env_file:` против inline `environment:`) |
-| `--value --var V` | значение `V` для интерполяции, одна строка (пусто, если только env_file) |
+| `list` (по умолчанию) | файлы Layer-1 chain в порядке загрузки (секреты последними) |
+| `files` | две группы: **интерполяция** (`COMPOSE_ENV_FILES`, Layer 1) и **runtime-only** (пути `env_file:` по сервисам) |
+| `overview` | **слои** окружения: пофайловый обход (`+`/`~`/`·`, сырые значения) + слои `env_file:` по сервисам + `inline environment:`, со строками `⚠ gap` |
+| `effective` | **финальное окружение контейнера** каждого сервиса с источником каждого значения |
+| `trace` | история одной переменной: победитель, затенённые файлы, эффекты — или **gap**, если она только в env_file |
+| `deps` | **замыкание зависимостей** `--var`: определения, прямые/обратные ссылки, сервисы-потребители |
 
-### `--trace` — переменная из chain (без gap)
+`--value --var V` — некаскадный примитив: печатает голое значение интерполяции
+(пусто, если `V` только в env_file) и не комбинируется с другими видами.
+
+| Фильтр | `list` | `files` | `overview` | `effective` | `trace` | `deps` | `json` |
+|---|---|---|---|---|---|---|---|
+| `--var KEY` | файлы, где объявлен | то же | только его строки | только его запись | сама переменная | обязателен | `vars` + записи |
+| `--service S` | - | этот сервис | этот сервис | этот сервис | его эффекты | - | его блок |
+
+Умолчания: `--var V` без вида = `--show trace`; `--service S` без вида =
+`--show effective`; `--json` без `--show` сохраняет полный документ, а
+`--json --show …` печатает только запрошенные секции. Невозможные комбинации дают
+**exit 2**; вид, чей фильтр ничего не нашёл, — **exit 1** (запросы `--trace`/
+`--value` по-прежнему exit 0 и отвечают `not set`/пусто).
+
+### `trace` — переменная цепочки (без gap)
 
 ```sh
-$ cenvkit env-debug --trace --var COMPOSE_PROJECT_NAME
+$ cenvkit env-debug --var COMPOSE_PROJECT_NAME
 COMPOSE_PROJECT_NAME=monorepo
   winner:     /app/.env (layer1)
 ```
 
-### `--trace` — gap в env_file
+### `trace` — gap из env_file
 
 ```sh
-$ cenvkit env-debug --trace --var WEB_PORT
+$ cenvkit env-debug --var WEB_PORT
 WEB_PORT
   interpolation: NOT in the Layer-1 chain -> ${WEB_PORT} falls back at run time
   runtime:       /app/web/.web.env -> WEB_PORT=18080  (service `web` container env only)
@@ -433,23 +450,49 @@ WEB_PORT
   fix:   add WEB_PORT to the Layer-1 chain (e.g. .env), or use it runtime-only.
 ```
 
-Это говорит вам: `WEB_PORT` **не** входит в цепочку интерполяции, поэтому каждый
-`${WEB_PORT}` в YAML откатывается при запуске; он *есть* в `web/.web.env` (значение
-18080), но это доходит только до контейнера `web`; а исправление — продвинуть его
-в Layer 1 (или принять, что он нужен только runtime).
+Читается так: `WEB_PORT` **нет** в цепочке интерполяции, поэтому каждый
+`${WEB_PORT}` в YAML откатывается к fallback при запуске; он *есть* в
+`web/.web.env` (значение 18080), но это попадает только в контейнер `web`;
+исправление — поднять его в Layer 1 (или принять, что он runtime-only).
 
-### `--overview` — все слои env с одного взгляда
+### `deps` — определения и все потребители
 
-Когда нужна полная картина — вклад каждого файла и что он затеняет — `--overview`
-обходит каждый файл с маркерами `+` новый / `~` переопределение (`old → new`) / `·`
-повтор, показывая **сырые** значения (`${...}` остаются нераскрытыми). Цепочка
-интерполяции (Layer 1) и слои runtime-only сервисных `env_file:` — отдельные
-секции; `inline environment:` — последний слой каждого сервиса (он побеждает), а
-строка `⚠ gap:` помечает любой `${VAR}`, к fallback которого откатится запуск.
-(Это восстанавливает обзор `env-debug-diff` из набора на `sh`, корректный под v3.)
+`--show deps --var V` отвечает на обратный вопрос, недоступный фильтру: где `V`
+определён, что нужно его значению, какие ключи ссылаются на него (транзитивно) и
+какие сервисы его получают.
 
 ```sh
-$ cenvkit env-debug --overview
+$ cenvkit env-debug --show deps --var LIVEKIT_KEY --redact
+LIVEKIT_KEY
+  defined in:
+    .secrets.env (layer1)
+    services/livekit-api/.livekit-api.env (env_file, service livekit-api)
+    services/token-exchange/.token-exchange.env (env_file, service token-exchange)
+  depends on:
+    LKA_LIVEKIT_KEY (depth 1)
+    TOKEN_EXCHANGE_LIVEKIT_KEY (depth 1)
+  needed by:
+    .env:LKA_LIVEKIT_KEY (depth 1)
+    .env:TOKEN_EXCHANGE_LIVEKIT_KEY (depth 1)
+    livekit/.livekit.env:KEY (depth 1, service livekit)
+  consumed by:
+    service livekit-api via services/livekit-api/.livekit-api.env
+    service token-exchange via services/token-exchange/.token-exchange.env
+```
+
+Рёбра берутся из сырых значений каждого слоя: `${VAR}`, `${VAR:-def}`, `$VAR` и
+вложенные default (`${A:-${B}}`). Незакрытая `${A` остаётся литералом, ребро не
+выдумывается. `--service` граф не сужает.
+
+### `overview` — все слои разом
+
+Когда нужна полная картина — вклад каждого файла и что он затеняет —
+`--show overview` обходит файлы с маркерами `+` новый / `~` переопределение
+(`old → new`) / `·` повтор, показывая **сырые** значения (`${...}` не раскрыты).
+Добавьте `--var`, чтобы сузить обход до одного ключа.
+
+```sh
+$ cenvkit env-debug --show overview
 env overview — myproject (mode: overview)
   CENVKIT_ENV = dev (from .env)
   Project dir = /app
@@ -476,17 +519,16 @@ Runtime-only — service env_file: (NOT interpolated)
       but NOT in the Layer-1 chain → run falls back.
 ```
 
-Читайте так: chain задаёт `SITE_URL` в `.env` и **переопределяет его** в `.dev.env`
-(маркер `~` — last-wins внутри Layer-1 chain); контейнер `web` получает
+Читается так: цепочка задаёт `SITE_URL` в `.env` и **переопределяет** его в
+`.dev.env` (маркер `~` — last-wins внутри Layer-1); контейнер `web` получает
 `WEB_PORT=18080` из своего `env_file:`, но inline `environment:` переопределяет его
-на fallback из `${WEB_PORT:-0}` (`0`) — и поскольку `WEB_PORT` нет в chain, каждый
-`${WEB_PORT}` в YAML откатывается при запуске (gap). Добавьте `--json`, чтобы
-получить структурированный массив `layers`.
+на fallback `${WEB_PORT:-0}` (`0`) — и поскольку `WEB_PORT` нет в цепочке, каждый
+`${WEB_PORT}` в YAML откатывается при запуске (gap).
 
-### `--effective` — финальное окружение контейнера сервиса, с источниками
+### `effective` — финальное окружение сервиса с источниками
 
 ```sh
-$ cenvkit env-debug --effective --service web
+$ cenvkit env-debug --show effective --service web
 service web:
   IS_DEV=true       <- (inline environment:) (environment)
   STACK_TIER=dev    <- (inline environment:) (environment)
@@ -494,24 +536,23 @@ service web:
   WEB_PORT=0        <- (inline environment:) (environment)
 ```
 
-Это **правда о контейнере**: `WEB_DEBUG` приходит из env_file; `WEB_PORT=0` — это
-значение inline `environment:` (интерполированное против Layer 1 → fallback `:-0`),
-которое **переопределяет** `18080` в `web/.web.env`. Inline `environment:` всегда
-побеждает `env_file:`, а inline `${VAR}` интерполируется против chain — поэтому
-`env-debug` показывает то, что контейнер *реально* получит, никогда значение,
-которого запуск не даст.
+Это **правда о контейнере**: `WEB_DEBUG` приходит из env_file; `WEB_PORT=0` —
+значение inline `environment:` (интерполировано против Layer 1 → fallback `:-0`),
+которое **переопределяет** `18080` из `web/.web.env`. Inline `environment:` всегда
+побеждает `env_file:`, а inline `${VAR}` интерполируется против цепочки — поэтому
+`env-debug` показывает то, что контейнер *реально* получит, а не значение, которого
+запуск не даст.
 
-### `--json` — структурированный Report
+### `--redact` и `--json`
 
-```sh
-cenvkit env-debug --trace --var WEB_PORT --json
-```
-
-Содержит `files` (Layer-1 `COMPOSE_ENV_FILES`), `chain_files`, по переменным
-`{value, in_chain, winner, overridden, runtime_defs, effects[], gap}` и посервисный
-`services[]` (записи с источниками + объявленные `env_files`). Эффекты сообщаются
-**только для полей сервисов** (`services.<name>.<field>`).
-
+`--redact` заменяет значения на `<redacted>`, сохраняя ключи, файлы, слои и
+заголовок `CENVKIT_ENV` — используйте перед копированием вывода куда-либо. `--json`
+содержит `files` (Layer-1 `COMPOSE_ENV_FILES`), `chain_files`, по переменным
+`{value, in_chain, winner, overridden, runtime_defs, effects[], gap}`, по сервисам
+`services[]` (записи с источниками + объявленные `env_files`) и, с `--show deps`,
+секцию `deps`. Без `--show` это полный документ; с `--show` — только запрошенные
+секции. Эффекты сообщаются **только для полей сервисов**
+(`services.<name>.<field>`).
 ---
 
 ## 8. CI
@@ -565,7 +606,7 @@ runs the same acceptance against upstream-latest Compose to report drift.
 ```sh
 test "$(cenvkit env-debug --value --var SITE_URL)" = "example.com"
 # Fail CI if a var your YAML references is only in a service env_file (a gap):
-cenvkit env-debug --trace --var APP_PORT --json | grep -q '"gap": *true' \
+cenvkit env-debug --var APP_PORT --json | grep -q '"gap": *true' \
   && { echo "APP_PORT is env_file-only — promote it to the chain"; exit 1; } || true
 ```
 
@@ -611,27 +652,27 @@ cenvkit env-debug --trace --var APP_PORT --json | grep -q '"gap": *true' \
 ## 10. Устранение неполадок
 
 **`${VAR}` разрешается в свой fallback `:-default`.**
-Запустите `cenvkit env-debug --trace --var VAR`. Если он показывает **gap**
+Запустите `cenvkit env-debug --var VAR`. Если он показывает **gap**
 (`NOT in the Layer-1 chain`), значение живёт только в сервисном `env_file:` — это
 runtime-only и никогда не питает интерполяцию. Исправление: добавьте `VAR` в
 Layer-1 chain (например, `.env`) или перестаньте ссылаться на неё как `${VAR}` в
 YAML.
 
 **Значение в контейнере не такое, какое я задал в env_file.**
-`cenvkit env-debug --effective --service S` показывает финальное окружение
+`cenvkit env-debug --show effective --service S` показывает финальное окружение
 контейнера с источником каждого ключа. Помните: inline `environment:` переопределяет
 `env_file:`, а inline `${VAR}` интерполируется против chain (поэтому inline
 `"${X:-0}"` может переопределить `X` из env_file на fallback).
 
 **`cenvkit env-files` не перечисляет мой сервисный `env_file:`.**
 Так задумано — `env-files` работает только с Layer-1 (`COMPOSE_ENV_FILES`).
-Сервисные env_files только runtime; смотрите их через `cenvkit env-debug --files`
+Сервисные env_files только runtime; смотрите их через `cenvkit env-debug --show files`
 (группа runtime-only).
 
 **Мой секрет переопределили.**
 `.secrets.env` идёт последним *внутри Layer-1 chain* (там он побеждает). Сервисный
 `env_file:` больше не влияет на интерполяцию, поэтому не может затереть секрет на
-этапе `${VAR}`. Если значение всё ещё неверное, `env-debug --trace --var VAR`
+этапе `${VAR}`. Если значение всё ещё неверное, `env-debug --var VAR`
 покажет победителя в chain.
 
 **`cenvkit compose` / `validate` падает с «Cannot connect to the Docker daemon».**
@@ -671,10 +712,10 @@ chain/overview/effective/trace все его используют.
   остаётся чистым для инструментов.
 
 ```sh
-cenvkit env-debug --overview                 # colored on a terminal
-cenvkit env-debug --overview --color=never   # force plain
-cenvkit env-debug --overview --color=always | less -R   # keep color through a pager
-NO_COLOR=1 cenvkit env-debug --overview      # plain via the env convention
+cenvkit env-debug --show overview                 # colored on a terminal
+cenvkit env-debug --show overview --color=never   # force plain
+cenvkit env-debug --show overview --color=always | less -R   # keep color through a pager
+NO_COLOR=1 cenvkit env-debug --show overview      # plain via the env convention
 ```
 
 ---

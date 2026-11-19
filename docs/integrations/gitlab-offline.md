@@ -145,7 +145,7 @@ a log line, not the registry:
 5. never put it under `cache: paths: [.]`;
 6. `git check-ignore -q .secrets.env` as a cheap guard against an edited
    `.gitignore`;
-7. in this job use `gap-report` / `env-debug --files` only — `env`,
+7. in this job use `gap-report` / `env-debug --show files` only — `env`,
    `run --print` and `env-debug --trace` print values verbatim.
 
 ## 7. Bumping the pinned version
