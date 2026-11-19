@@ -6,6 +6,8 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-11-19
+
 ### Documentation
 
 - Docs brought up to the 0.9 contract: `docs/guide.md` §7 rewritten around the
