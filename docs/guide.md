@@ -480,6 +480,13 @@ When you want the full picture — every file contribution and what it shadows �
 repeat markers, showing **raw** values (`${...}` left unexpanded). Combine it with
 `--var` to narrow the walk to one key.
 
+When `--var` names a key that no service declares (a chain-only key), the runtime
+section still answers who uses it: it lists the keys whose values reference it via
+`${...}` (the full closure is one `--show deps --var KEY` away). A runtime
+`env_file:` that is also listed in `COMPOSE_ENV_FILES` is annotated
+`(also in COMPOSE_ENV_FILES — interpolated)`: such a file feeds interpolation and
+the container at the same time.
+
 ```sh
 $ cenvkit env-debug --show overview
 env overview — myproject (mode: overview)

@@ -6,6 +6,17 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-11-19
+
+### Added
+
+- `--show overview --var KEY` now answers who uses a chain-only key: when no
+  service declares it, the runtime section lists the keys whose values reference
+  it via `${...}` (capped at 10, with a pointer to the full `--show deps` closure).
+- A runtime `env_file:` that is also listed in `COMPOSE_ENV_FILES` is annotated
+  `(also in COMPOSE_ENV_FILES — interpolated)`, so the "NOT interpolated" header
+  cannot mislead in mixed configurations.
+
 ## [0.9.2] — 2026-11-19
 
 ### Documentation

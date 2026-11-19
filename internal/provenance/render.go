@@ -252,6 +252,8 @@ func RenderJSONOpts(w io.Writer, r Report, o JSONOpts) error {
 			// it is internal to --show overview and must not leak into the document.
 			r.Layers = nil
 		}
+		// Interpolation edges are an internal input of the deps/overview views.
+		r.Refs = nil
 		return enc.Encode(r)
 	}
 	// Section-selective path: BuildDeps still needs the layers, so drop them only
@@ -646,6 +648,17 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 		_, _ = fmt.Fprintf(w, "  Project dir = %s\n", s.Path(o.ProjectDir))
 	}
 
+	// With --var the overview also answers "who uses it" for a chain-only key,
+	// and marks runtime files that are ALSO interpolation inputs.
+	var deps DepReport
+	if o.FilterVar != "" {
+		deps = BuildDeps(r, o.FilterVar)
+	}
+	chainFiles := make(map[string]bool, len(r.ChainFiles))
+	for _, f := range r.ChainFiles {
+		chainFiles[f] = true
+	}
+
 	// Section 1 — interpolation chain (Layer-1 only), narrowed by --var to the
 	// layers that actually declare that key.
 	_, _ = fmt.Fprintln(w, "\n"+s.Header("Interpolation chain (COMPOSE_ENV_FILES)"))
@@ -696,6 +709,7 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 	if shown == 0 {
 		if o.FilterVar != "" {
 			_, _ = fmt.Fprintf(w, "\n  %s\n", s.Hint(fmt.Sprintf("%s: not declared in any service env_file: or inline environment:", Sanitize(o.FilterVar))))
+			printReferencedBy(w, deps, s)
 		}
 		return
 	}
@@ -711,11 +725,15 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 			if len(entries) == 0 {
 				continue
 			}
-			label := l.File
 			if l.Layer == "environment" {
-				label = "inline environment:"
+				_, _ = fmt.Fprintf(w, "    %s\n", s.Path("inline environment:"))
+			} else {
+				_, _ = fmt.Fprintf(w, "    %s", s.Path(l.File))
+				if chainFiles[l.File] {
+					_, _ = fmt.Fprintf(w, "%s", s.Hint(" (also in COMPOSE_ENV_FILES — interpolated)"))
+				}
+				_, _ = fmt.Fprintln(w)
 			}
-			_, _ = fmt.Fprintf(w, "    %s\n", s.Path(label))
 			renderLayerEntriesIndented(w, entries, svcAcc, s)
 		}
 		renderServiceGaps(w, r, name, s, o.FilterVar)
@@ -882,6 +900,30 @@ func renderDeps(w io.Writer, r Report, o HumanOpts, s Styler) {
 				_, _ = fmt.Fprintf(w, "    service %s field %s (YAML interpolation)\n", s.Service(c.Service), Sanitize(c.Field))
 			}
 		}
+	}
+}
+
+// printReferencedBy writes the reverse edges under the overview hint, so a
+// chain-only --var still answers "who uses it" without switching to --show deps.
+func printReferencedBy(w io.Writer, d DepReport, s Styler) {
+	if len(d.NeededBy) == 0 {
+		_, _ = fmt.Fprintf(w, "    %s\n", s.Hint("(nothing references it via ${...})"))
+		return
+	}
+	_, _ = fmt.Fprintf(w, "    %s\n", s.Hint(fmt.Sprintf("referenced by %d key(s) via ${...} (full closure: --show deps --var %s):", len(d.NeededBy), Sanitize(d.Root))))
+	limit := len(d.NeededBy)
+	if limit > 10 {
+		limit = 10
+	}
+	for _, e := range d.NeededBy[:limit] {
+		where := e.File
+		if e.Service != "" {
+			where += " (service " + e.Service + ")"
+		}
+		_, _ = fmt.Fprintf(w, "      %s:%s\n", s.Path(where), s.Key(e.Key))
+	}
+	if rest := len(d.NeededBy) - limit; rest > 0 {
+		_, _ = fmt.Fprintf(w, "      %s\n", s.Hint(fmt.Sprintf("… (+%d more)", rest)))
 	}
 }
 

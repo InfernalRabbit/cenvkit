@@ -123,7 +123,7 @@ impossible combination exits 2 with a message naming what is missing.
 |---|---|
 | `list` | Layer-1 chain files (the default) |
 | `files` | two groups: interpolation (Layer 1) and runtime-only (service `env_file:` paths) |
-| `overview` | per-file layering: `+` new / `~` override (`old -> new`) / `·` repeat, raw values, `⚠ gap:` lines |
+| `overview` | per-file layering: `+` new / `~` override (`old -> new`) / `·` repeat, raw values, `⚠ gap:` lines; runtime files that are also chain inputs are marked, and with `--var` a chain-only key lists the keys that reference it |
 | `effective` | each service final container env with the source of every value |
 | `trace` | one variable story (requires `--var`) |
 | `deps` | dependency closure of `--var`: definitions, what it needs, who needs it, who consumes it |

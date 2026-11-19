@@ -778,6 +778,7 @@ func newEnvDebugCmd() *cobra.Command {
 			rep, err := engine.New().Provenance(cmd.Context(), engine.ProvInput{
 				ProjectDir: dir, Env: withComposeEnv(os.Environ(), cr.ComposeEnv), EnvFiles: pf,
 				WantLayers: req.wantLayers, WantDeps: req.wantDeps,
+				WantRefs: req.wantDeps || (req.varName != "" && hasView(req.views, provenance.ViewOverview)),
 			})
 			if err != nil {
 				return err

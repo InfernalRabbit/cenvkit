@@ -30,7 +30,8 @@ type ProvInput struct {
 	Profiles       []string
 	EnvFiles       []ProvFile // ordered merged COMPOSE_ENV_FILES (for A attribution)
 	WantLayers     bool       // populate Report.Layers (the raw ordered --overview lens); off by default to keep other modes' JSON unchanged (D-A)
-	WantDeps       bool       // populate Report.Refs (interpolation edges for --show deps); implies layers
+	WantDeps       bool       // render the deps view (implies WantRefs and layers)
+	WantRefs       bool       // populate Report.Refs only (overview --var reverse edges)
 	RequireCompose bool       // gap lint must not report clean when no default config exists
 }
 
@@ -394,7 +395,7 @@ func (e *composeEngine) Provenance(ctx context.Context, in ProvInput) (provenanc
 		}
 		rep.Vars[k] = vt
 	}
-	if in.WantDeps {
+	if in.WantDeps || in.WantRefs {
 		// Every raw layer entry that embeds a reference contributes an edge. Kept
 		// separate from Vars on purpose: this is the dependency graph, not the
 		// attribution table (a key can be defined in several files).
