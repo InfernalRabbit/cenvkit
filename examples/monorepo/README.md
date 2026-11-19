@@ -3,7 +3,7 @@
 # Monorepo blueprint — root orchestrates subprojects
 
 A complete, runnable example of the **root-`include:`-s-subprojects** topology:
-a root compose that pulls in two subprojects (`web/`, `api/`) via `include:`,
+a root compose that pulls in three subprojects (`web/`, `api/`, `services/reports/`) via `include:`,
 plus a shared network. It demonstrates the gap that native compose leaves open
 and how `cenvkit env-debug` surfaces it: `${WEB_PORT}` lives only in
 `web/.web.env` (a service `env_file:`) — that file is **runtime-only**, so the
@@ -35,8 +35,8 @@ examples/monorepo/
 ```
 
 > This is a **source blueprint**. Real `.env` files are seeded from the
-> committed `example.*` templates with `cenvkit init` (no-clobber) — that is
-> exactly what `test/smoke-monorepo.sh` does.
+> committed `example.*` templates with `cenvkit init` (no-clobber) — the same
+> seeding the acceptance suite performs before asserting (`go test ./test/...`).
 
 ---
 
@@ -62,7 +62,7 @@ falls back to `:-0`. The container still receives `WEB_PORT=18080` at runtime
 cd examples/monorepo
 
 # 1. Seed the real env files from the example.* templates (no-clobber).
-cenvkit init                 # → .env, .dev.env, .prod.env (never clobbers)
+cenvkit init                 # seeds EVERY example.* (here: .env, .dev.env, .prod.env, .ci.env, .api-chain.env)
 
 # 2. See the Layer-1 chain (these are the files that feed interpolation).
 cenvkit env-files
@@ -177,19 +177,19 @@ Optional services hide behind a profile (`COMPOSE_PROFILES` is forwarded to
 compose unchanged). The blueprint ships a `tools` service off by default:
 
 ```sh
-cenvkit compose config --services                       # web, api
-COMPOSE_PROFILES=tools cenvkit compose config --services # web, api, tools
+cenvkit compose config --services                       # reports, web, api
+COMPOSE_PROFILES=tools cenvkit compose config --services # api, reports, tools, web
 ```
 
 ---
 
 ## Verify
 
-`test/smoke-monorepo.sh` runs this whole blueprint end-to-end against the
-`cenvkit` binary — confirming that `env-files` returns Layer-1 only, that
+The acceptance suite runs this whole blueprint end-to-end against a freshly
+built `cenvkit` binary — confirming that `env-files` returns Layer-1 only, that
 `${WEB_PORT}` falls back to `0` (runtime-only gap), and that `env-debug --trace`
 reports the gap correctly:
 
 ```sh
-sh test/smoke-monorepo.sh
+go test ./test/... -v -count=1        # from the repository root
 ```

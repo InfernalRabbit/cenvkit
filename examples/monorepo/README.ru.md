@@ -3,8 +3,8 @@
 # Блюпринт монорепо — корень оркестрирует подпроекты
 
 Полный запускаемый пример топологии **«корневой `include:` подпроектов»**:
-корневой compose, который через `include:` втягивает два подпроекта (`web/`,
-`api/`), плюс общая сеть. Он демонстрирует gap, который нативный compose
+корневой compose, который через `include:` втягивает три подпроекта (`web/`,
+`api/`, `services/reports/`), плюс общая сеть. Он демонстрирует gap, который нативный compose
 оставляет открытым, и то, как его выявляет `cenvkit env-debug`: `${WEB_PORT}`
 живёт только в `web/.web.env` (сервисный `env_file:`) — этот файл
 **runtime-only**, поэтому интерполяция YAML откатывается к `:-0`. `env-debug`
@@ -35,8 +35,8 @@ examples/monorepo/
 ```
 
 > Это **исходный блюпринт**. Настоящие `.env`-файлы засеваются из закоммиченных
-> шаблонов `example.*` командой `cenvkit init` (no-clobber) — именно это и делает
-> `test/smoke-monorepo.sh`.
+> шаблонов `example.*` командой `cenvkit init` (no-clobber) — то же самое seeding
+> выполняет acceptance-набор перед проверками (`go test ./test/...`).
 
 ---
 
@@ -62,7 +62,7 @@ examples/monorepo/
 cd examples/monorepo
 
 # 1. Seed the real env files from the example.* templates (no-clobber).
-cenvkit init                 # → .env, .dev.env, .prod.env (never clobbers)
+cenvkit init                 # seeds EVERY example.* (here: .env, .dev.env, .prod.env, .ci.env, .api-chain.env)
 
 # 2. See the Layer-1 chain (these are the files that feed interpolation).
 cenvkit env-files
@@ -178,19 +178,19 @@ compose без изменений). В блюпринте поставляетс
 выключенный:
 
 ```sh
-cenvkit compose config --services                       # web, api
-COMPOSE_PROFILES=tools cenvkit compose config --services # web, api, tools
+cenvkit compose config --services                       # reports, web, api
+COMPOSE_PROFILES=tools cenvkit compose config --services # api, reports, tools, web
 ```
 
 ---
 
 ## Проверка
 
-`test/smoke-monorepo.sh` прогоняет весь этот блюпринт end-to-end против бинарника
-`cenvkit` — подтверждая, что `env-files` возвращает только Layer-1, что
+Acceptance-набор прогоняет весь этот блюпринт end-to-end против свежесобранного
+бинарника `cenvkit` — подтверждая, что `env-files` возвращает только Layer-1, что
 `${WEB_PORT}` откатывается к `0` (runtime-only gap) и что `env-debug --trace`
 корректно сообщает о gap:
 
 ```sh
-sh test/smoke-monorepo.sh
+go test ./test/... -v -count=1        # из корня репозитория
 ```
