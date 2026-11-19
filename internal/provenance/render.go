@@ -129,7 +129,33 @@ func (s sanitizingStyler) Created(v string) string     { return s.inner.Created(
 func (s sanitizingStyler) Skipped(v string) string     { return s.inner.Skipped(Sanitize(v)) }
 func (s sanitizingStyler) ErrorMsg(v string) string    { return s.inner.ErrorMsg(Sanitize(v)) }
 
+// redactingStyler masks VALUE payloads for --redact. Keys, paths, service names,
+// section headers and markers stay visible, so the shape of the environment is
+// still readable while no secret leaves the process.
+type redactingStyler struct{ inner Styler }
+
+func (s redactingStyler) Header(v string) string      { return s.inner.Header(v) }
+func (s redactingStyler) MarkerNew() string           { return s.inner.MarkerNew() }
+func (s redactingStyler) MarkerOverride() string      { return s.inner.MarkerOverride() }
+func (s redactingStyler) MarkerRepeat() string        { return s.inner.MarkerRepeat() }
+func (s redactingStyler) Arrow() string               { return s.inner.Arrow() }
+func (s redactingStyler) Key(v string) string         { return s.inner.Key(v) }
+func (s redactingStyler) Value(string) string         { return "<redacted>" }
+func (s redactingStyler) Old(string) string           { return "<redacted>" }
+func (s redactingStyler) Path(v string) string        { return s.inner.Path(v) }
+func (s redactingStyler) Service(v string) string     { return s.inner.Service(v) }
+func (s redactingStyler) SourceLabel(v string) string { return s.inner.SourceLabel(v) }
+func (s redactingStyler) Gap(v string) string         { return s.inner.Gap(v) }
+func (s redactingStyler) GapName(v string) string     { return s.inner.GapName(v) }
+func (s redactingStyler) Hint(v string) string        { return s.inner.Hint(v) }
+func (s redactingStyler) Ok(v string) string          { return s.inner.Ok(v) }
+func (s redactingStyler) Fail(v string) string        { return s.inner.Fail(v) }
+func (s redactingStyler) Created(v string) string     { return s.inner.Created(v) }
+func (s redactingStyler) Skipped(v string) string     { return s.inner.Skipped(v) }
+func (s redactingStyler) ErrorMsg(v string) string    { return s.inner.ErrorMsg(v) }
+
 // st returns the injected Styler wrapped in the sanitizing decorator, or the
+// decorator around plainStyler when none was set (nil-safe).
 // decorator around plainStyler when none was set (nil-safe).
 func st(s Styler) Styler {
 	if s == nil {
@@ -144,6 +170,9 @@ type HumanOpts struct {
 	Trace     string // non-empty: single-var trace (A + B-lite)
 	Effective bool   // per-service env (C)
 	Service   string // filter Effective to one service
+	FilterVar string // filter Effective to one KEY (the --var value)
+	Views     []View // explicit cascade order (--show); empty => derive from the legacy bools
+	Redact    bool   // mask values as <redacted>
 	Chain     bool   // Layer-1-only list (default view) — renders Report.ChainFiles
 	Files     bool   // two-group view: interpolation (Report.Files) + runtime-only (Report.Services)
 	Value     string // non-empty: print the winning value only
@@ -157,37 +186,282 @@ type HumanOpts struct {
 	Style Styler // optional color/formatting; nil ⇒ plain (byte-identical)
 }
 
+// JSONOpts narrows the machine-readable report. The zero value renders the whole
+// report (the historical behaviour, so existing consumers keep working).
+type JSONOpts struct {
+	Service    string // keep only this service block
+	Var        string // keep only this variable trace and the service entries for it
+	Views      []View // non-empty: keep only the sections the requested views need
+	Redact     bool   // mask every value as <redacted>
+	DropLayers bool   // the raw layer dump was built only to filter; do not emit it
+}
+
 // RenderJSON writes the whole Report as indented JSON.
-func RenderJSON(w io.Writer, r Report) error {
+func RenderJSON(w io.Writer, r Report) error { return RenderJSONOpts(w, r, JSONOpts{}) }
+
+// RenderJSONOpts writes the Report as indented JSON with the optional
+// service/variable filters applied to a copy, so the caller keeps its Report.
+func RenderJSONOpts(w io.Writer, r Report, o JSONOpts) error {
+	if o.Service != "" {
+		kept := make([]ServiceEnv, 0, 1)
+		for _, se := range r.Services {
+			if se.Service == o.Service {
+				kept = append(kept, se)
+			}
+		}
+		r.Services = kept
+	}
+	if o.Var != "" {
+		if vt, ok := r.Vars[o.Var]; ok {
+			r.Vars = map[string]VarTrace{o.Var: vt}
+		} else {
+			r.Vars = map[string]VarTrace{}
+		}
+		keptServices := make([]ServiceEnv, 0, len(r.Services))
+		for _, se := range r.Services {
+			keptEntries := make([]EnvEntry, 0, 1)
+			for _, e := range se.Entries {
+				if e.Key == o.Var {
+					keptEntries = append(keptEntries, e)
+				}
+			}
+			if len(keptEntries) > 0 {
+				se.Entries = keptEntries
+				keptServices = append(keptServices, se)
+			}
+		}
+		r.Services = keptServices
+		// Narrow the file lists too when the raw layers are available (the command
+		// requests them for this combination), so the document answers "WHERE".
+		if len(r.Layers) > 0 {
+			declaring := filesDeclaring(r, o.Var)
+			r.ChainFiles = declaring
+			r.Files = append([]string(nil), declaring...)
+		}
+	}
+	if o.Redact {
+		r = redactReport(r)
+	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(r)
+	if o.DropLayers {
+		// The layer dump was built only so the --var filter could answer "where";
+		// it is internal to --show overview and must not leak into other views.
+		r.Layers = nil
+	}
+	if len(o.Views) == 0 {
+		return enc.Encode(r)
+	}
+	doc := jsonDoc{}
+	for _, v := range o.Views {
+		switch v {
+		case ViewList:
+			doc.ChainFiles = &r.ChainFiles
+		case ViewFiles:
+			doc.Files = &r.Files
+			doc.Services = &r.Services
+		case ViewEffective, ViewTrace:
+			doc.Vars = &r.Vars
+			doc.Services = &r.Services
+		case ViewOverview:
+			doc.Layers = &r.Layers
+		}
+	}
+	return enc.Encode(doc)
+}
+
+// jsonDoc is the section-selective document emitted when --show is given. Pointer
+// fields keep unrequested sections out while still emitting requested-but-empty
+// ones (as [] or {}), so consumers can rely on the shape.
+type jsonDoc struct {
+	Files      *[]string            `json:"files,omitempty"`
+	ChainFiles *[]string            `json:"chain_files,omitempty"`
+	Vars       *map[string]VarTrace `json:"vars,omitempty"`
+	Services   *[]ServiceEnv        `json:"services,omitempty"`
+	Layers     *[]OverviewLayer     `json:"layers,omitempty"`
+}
+
+// redactReport returns a copy of r with every rendered value masked. Structure,
+// keys, sources and layer membership are preserved so the document stays useful.
+func redactReport(r Report) Report {
+	const masked = "<redacted>"
+	vars := make(map[string]VarTrace, len(r.Vars))
+	for k, vt := range r.Vars {
+		vt.Value = masked
+		for i := range vt.Effects {
+			vt.Effects[i].Resolved = masked
+		}
+		for i := range vt.RuntimeDefs {
+			vt.RuntimeDefs[i].Value = masked
+		}
+		vars[k] = vt
+	}
+	r.Vars = vars
+	services := make([]ServiceEnv, len(r.Services))
+	for i, se := range r.Services {
+		entries := make([]EnvEntry, len(se.Entries))
+		copy(entries, se.Entries)
+		for j := range entries {
+			entries[j].Value = masked
+		}
+		se.Entries = entries
+		services[i] = se
+	}
+	r.Services = services
+	layers := make([]OverviewLayer, len(r.Layers))
+	for i, l := range r.Layers {
+		entries := make([]OverviewEntry, len(l.Entries))
+		copy(entries, l.Entries)
+		for j := range entries {
+			entries[j].RawValue = masked
+		}
+		l.Entries = entries
+		layers[i] = l
+	}
+	r.Layers = layers
+	return r
 }
 
 // RenderHuman writes the selected view as plain (or styled) text. The styler is
 // resolved once (nil ⇒ plain) and threaded into each view.
+// View names one stage of the human output. Stages are CASCADING: when several are
+// requested they render one after another in the canonical order below, separated by
+// a blank line, instead of the old winner-takes-all precedence.
+type View string
+
+const (
+	ViewList      View = "list"
+	ViewFiles     View = "files"
+	ViewOverview  View = "overview"
+	ViewEffective View = "effective"
+	ViewTrace     View = "trace"
+)
+
+// ActiveViews returns the requested stages in cascade order.
+func (o HumanOpts) ActiveViews() []View {
+	if len(o.Views) > 0 {
+		return o.Views
+	}
+	views := make([]View, 0, 5)
+	if o.Chain {
+		views = append(views, ViewList)
+	}
+	if o.Files {
+		views = append(views, ViewFiles)
+	}
+	if o.Overview {
+		views = append(views, ViewOverview)
+	}
+	if o.Effective {
+		views = append(views, ViewEffective)
+	}
+	if o.Trace != "" {
+		views = append(views, ViewTrace)
+	}
+	return views
+}
+
+// RenderHuman writes every requested stage, in cascade order. --value is the one
+// non-cascading output (a bare value for scripts); the command layer rejects it
+// together with other stages, so it stays a single early return here.
 func RenderHuman(w io.Writer, r Report, o HumanOpts) {
 	s := st(o.Style)
-	switch {
-	case o.Value != "":
-		_, _ = fmt.Fprintln(w, Sanitize(r.Vars[o.Value].Value)) // bare value, unstyled but sanitized
-	case o.Trace != "":
-		renderTrace(w, r, o.Trace, s)
-	case o.Effective:
-		renderEffective(w, r, o.Service, s)
-	case o.Files:
-		renderFiles(w, r, s)
-	case o.Overview:
-		renderOverview(w, r, o, s)
-	default: // Chain == default view: Layer-1 only (Report.ChainFiles)
-		if len(r.ChainFiles) == 0 {
-			_, _ = fmt.Fprintln(w, s.Hint(emptyChainHint))
+	if o.Redact {
+		s = redactingStyler{inner: s}
+	}
+	if o.Value != "" {
+		if o.Redact {
+			_, _ = fmt.Fprintln(w, "<redacted>")
 			return
 		}
-		for _, f := range r.ChainFiles {
-			_, _ = fmt.Fprintln(w, s.Path(f))
+		_, _ = fmt.Fprintln(w, Sanitize(r.Vars[o.Value].Value))
+		return
+	}
+	views := o.ActiveViews()
+	if len(views) == 0 {
+		views = []View{ViewList} // bare invocation: the Layer-1 chain list
+	}
+	for i, v := range views {
+		if i > 0 {
+			_, _ = fmt.Fprintln(w)
+		}
+		switch v {
+		case ViewList:
+			renderList(w, r, o, s)
+		case ViewFiles:
+			renderFiles(w, r, o, s)
+		case ViewOverview:
+			renderOverview(w, r, o, s)
+		case ViewEffective:
+			renderEffective(w, r, o.Service, o.FilterVar, s)
+		case ViewTrace:
+			renderTrace(w, r, o.Trace, o.Service, o.Redact, s)
 		}
 	}
+}
+
+// renderList prints the Layer-1 chain files, narrowed by --var to the files that
+// actually declare that key (requires Report.Layers, which the command requests
+// when a variable filter is combined with --list/--files).
+func renderList(w io.Writer, r Report, o HumanOpts, s Styler) {
+	files := r.ChainFiles
+	if o.FilterVar != "" {
+		files = filesDeclaring(r, o.FilterVar)
+	}
+	if len(files) == 0 {
+		if o.FilterVar != "" {
+			_, _ = fmt.Fprintf(w, "%s\n", s.Hint(fmt.Sprintf("%s: declared in no chain file", Sanitize(o.FilterVar))))
+			return
+		}
+		_, _ = fmt.Fprintln(w, s.Hint(emptyChainHint))
+		return
+	}
+	for _, f := range files {
+		_, _ = fmt.Fprintln(w, s.Path(f))
+	}
+}
+
+// filterKeyEntries returns entries unchanged when key is empty, else only the ones
+// declaring that key. It backs the --var filter of every view.
+func filterKeyEntries(entries []OverviewEntry, key string) []OverviewEntry {
+	if key == "" {
+		return entries
+	}
+	out := make([]OverviewEntry, 0, 1)
+	for _, e := range entries {
+		if e.Key == key {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// filesDeclaring returns the Layer-1 files whose raw entries declare key.
+func filesDeclaring(r Report, key string) []string {
+	var out []string
+	for _, l := range r.Layers {
+		if l.Layer != "layer1" {
+			continue
+		}
+		if len(filterKeyEntries(l.Entries, key)) > 0 {
+			out = append(out, l.File)
+		}
+	}
+	return out
+}
+
+// serviceFilesDeclaring returns the env_file: paths of one service that declare key.
+func serviceFilesDeclaring(r Report, service, key string) []string {
+	var out []string
+	for _, l := range r.Layers {
+		if l.Service != service || l.Layer != "env_file" {
+			continue
+		}
+		if len(filterKeyEntries(l.Entries, key)) > 0 {
+			out = append(out, l.File)
+		}
+	}
+	return out
 }
 
 // emptyChainHint is the dim advisory shown in the human env-debug views when the
@@ -202,10 +476,38 @@ const emptyChainHint = "(none — no Layer-1 chain files present; run `cenvkit i
 // view; a var defined only in a service env_file: (a gap) renders the
 // interpolation/runtime split + a ⚠ gap line per effect + a fix hint, explaining
 // that the env_file value is container-only and never reaches the run's ${VAR}.
-func renderTrace(w io.Writer, r Report, name string, s Styler) {
+func renderTrace(w io.Writer, r Report, name, service string, redact bool, s Styler) {
 	vt, ok := r.Vars[name]
 	if !ok {
-		_, _ = fmt.Fprintf(w, "%s: not set\n", Sanitize(name))
+		// Not an interpolation variable at all. It may still be a plain key of a
+		// service env_file: (runtime-only) — the case that used to answer "not set"
+		// and send people grepping the repo. Explain where it actually lives.
+		type runtimeRow struct {
+			service string
+			entry   EnvEntry
+		}
+		var rows []runtimeRow
+		for _, se := range r.Services {
+			if service != "" && se.Service != service {
+				continue
+			}
+			for _, e := range se.Entries {
+				if e.Key == name {
+					rows = append(rows, runtimeRow{service: se.Service, entry: e})
+				}
+			}
+		}
+		if len(rows) == 0 {
+			_, _ = fmt.Fprintf(w, "%s: not set\n", Sanitize(name))
+			return
+		}
+		_, _ = fmt.Fprintln(w, s.Key(name))
+		_, _ = fmt.Fprintf(w, "  interpolation: not referenced as $%s anywhere in the compose model\n", "{"+Sanitize(name)+"}")
+		for _, rd := range rows {
+			_, _ = fmt.Fprintf(w, "  runtime-only:  %s -> %s=%s  (service %s container env only)\n",
+				s.Path(rd.entry.Source.File), Sanitize(name), s.Value(rd.entry.Value), s.Service(rd.service))
+		}
+		_, _ = fmt.Fprintln(w, "  note:          delivered to the container; it is not an interpolation variable")
 		return
 	}
 	if vt.InChain {
@@ -216,6 +518,9 @@ func renderTrace(w io.Writer, r Report, name string, s Styler) {
 			_, _ = fmt.Fprintf(w, "  overridden: %s (%s)\n", s.Path(src.File), s.SourceLabel(src.Layer))
 		}
 		for _, e := range vt.Effects {
+			if service != "" && e.Service != service {
+				continue
+			}
 			_, _ = fmt.Fprintf(w, "  effect:     service %s field %s -> %s\n", s.Service(e.Service), Sanitize(e.Field), s.Value(stripVarPrefix(name, e.Resolved)))
 		}
 		return
@@ -224,13 +529,23 @@ func renderTrace(w io.Writer, r Report, name string, s Styler) {
 	_, _ = fmt.Fprintln(w, s.Key(name))
 	_, _ = fmt.Fprintln(w, "  interpolation: NOT in the Layer-1 chain -> ${"+Sanitize(name)+"} falls back at run time")
 	for _, rd := range vt.RuntimeDefs {
+		if service != "" && rd.Service != service {
+			continue
+		}
 		_, _ = fmt.Fprintf(w, "  runtime:       %s -> %s=%s  (service `%s` container env only)\n",
 			s.Path(rd.File), Sanitize(name), s.Value(rd.Value), s.Service(rd.Service))
 	}
 	if vt.Gap {
 		for _, e := range vt.Effects {
+			if service != "" && e.Service != service {
+				continue
+			}
+			resolved := stripVarPrefix(name, e.Resolved)
+			if redact {
+				resolved = "<redacted>"
+			}
 			_, _ = fmt.Fprintf(w, "  %s\n", s.Gap(fmt.Sprintf("⚠ gap: ${%s} used in service %s %s resolves to %q at the run, NOT the env_file value (defined only in a service env_file).",
-				name, e.Service, e.Field, stripVarPrefix(name, e.Resolved))))
+				name, e.Service, e.Field, resolved)))
 		}
 		_, _ = fmt.Fprintf(w, "  fix:   add %s to the Layer-1 chain (e.g. .env), or use it runtime-only.\n", Sanitize(name))
 	}
@@ -239,27 +554,46 @@ func renderTrace(w io.Writer, r Report, name string, s Styler) {
 // renderFiles prints the two labeled groups (D2 / spec §3.4): the interpolation
 // set (COMPOSE_ENV_FILES = Layer 1) and the runtime-only set (service env_file:
 // paths grouped by service, NOT interpolated — container env only).
-func renderFiles(w io.Writer, r Report, s Styler) {
-	_, _ = fmt.Fprintln(w, s.Header("interpolation (COMPOSE_ENV_FILES):"))
-	if len(r.Files) == 0 {
-		_, _ = fmt.Fprintf(w, "  %s\n", s.Hint(emptyChainHint)) // FIX 1
+func renderFiles(w io.Writer, r Report, o HumanOpts, s Styler) {
+	interp := r.Files
+	if o.FilterVar != "" {
+		interp = filesDeclaring(r, o.FilterVar)
 	}
-	for _, f := range r.Files {
+	_, _ = fmt.Fprintln(w, s.Header("interpolation (COMPOSE_ENV_FILES):"))
+	if len(interp) == 0 {
+		if o.FilterVar != "" {
+			_, _ = fmt.Fprintf(w, "  %s\n", s.Hint(fmt.Sprintf("%s: declared in no chain file", Sanitize(o.FilterVar))))
+		} else {
+			_, _ = fmt.Fprintf(w, "  %s\n", s.Hint(emptyChainHint)) // FIX 1
+		}
+	}
+	for _, f := range interp {
 		_, _ = fmt.Fprintf(w, "  %s\n", s.Path(f))
 	}
 	_, _ = fmt.Fprintln(w, s.Header("runtime-only (service env_file: — NOT interpolated, container env only):"))
+	printed := 0
 	for _, se := range r.Services {
-		// Render the service's DECLARED env_file: paths (ServiceEnv.EnvFiles), not
-		// the per-key Entries sources — a file whose every key is inline-overridden
-		// still appears here (N-3 fix). The engine supplies these deduped in
-		// declared order.
-		if len(se.EnvFiles) == 0 {
+		if o.Service != "" && se.Service != o.Service {
 			continue
 		}
+		// Render the DECLARED env_file: paths (ServiceEnv.EnvFiles), not the per-key
+		// Entries sources — a file whose every key is inline-overridden still appears
+		// here (N-3). With --var keep only the files that declare that key.
+		files := se.EnvFiles
+		if o.FilterVar != "" {
+			files = serviceFilesDeclaring(r, se.Service, o.FilterVar)
+		}
+		if len(files) == 0 {
+			continue
+		}
+		printed++
 		_, _ = fmt.Fprintf(w, "  %s:\n", s.Service(se.Service))
-		for _, f := range se.EnvFiles {
+		for _, f := range files {
 			_, _ = fmt.Fprintf(w, "    %s\n", s.Path(f))
 		}
+	}
+	if printed == 0 && o.FilterVar != "" {
+		_, _ = fmt.Fprintf(w, "  %s\n", s.Hint(fmt.Sprintf("%s: declared in no service env_file:", Sanitize(o.FilterVar))))
 	}
 }
 
@@ -291,7 +625,8 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 		_, _ = fmt.Fprintf(w, "  Project dir = %s\n", s.Path(o.ProjectDir))
 	}
 
-	// Section 1 — interpolation chain (Layer-1 only).
+	// Section 1 — interpolation chain (Layer-1 only), narrowed by --var to the
+	// layers that actually declare that key.
 	_, _ = fmt.Fprintln(w, "\n"+s.Header("Interpolation chain (COMPOSE_ENV_FILES)"))
 	_, _ = fmt.Fprintf(w, "  %s new   %s override   %s repeat\n", s.MarkerNew(), s.MarkerOverride(), s.MarkerRepeat())
 	chainAcc := map[string]string{}
@@ -300,27 +635,59 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 		if l.Layer != "layer1" {
 			continue
 		}
+		entries := filterKeyEntries(l.Entries, o.FilterVar)
+		if len(entries) == 0 {
+			continue
+		}
 		chainLayers++
 		_, _ = fmt.Fprintf(w, "\n  %s\n", s.Path(l.File))
-		renderLayerEntries(w, l.Entries, chainAcc, s)
+		renderLayerEntries(w, entries, chainAcc, s)
 	}
 	if chainLayers == 0 {
-		_, _ = fmt.Fprintf(w, "\n  %s\n", s.Hint(emptyChainHint)) // FIX 1
+		if o.FilterVar != "" {
+			_, _ = fmt.Fprintf(w, "\n  %s\n", s.Hint(fmt.Sprintf("%s: not defined in any interpolation-chain file", Sanitize(o.FilterVar))))
+		} else {
+			_, _ = fmt.Fprintf(w, "\n  %s\n", s.Hint(emptyChainHint)) // FIX 1
+		}
 	}
 
-	// Section 2 — runtime-only, per service (fresh accumulator each). Suppressed
-	// entirely when no service has env_file:/inline layers (e.g. chain-only mode),
-	// so the section header isn't printed with nothing under it (N-4).
-	services := overviewServices(r.Layers)
-	if len(services) == 0 {
+	// Section 2 — runtime-only, per service (fresh accumulator each). With --var
+	// only the layers declaring that key survive; --service narrows to one service;
+	// the section header is suppressed when nothing is left (N-4).
+	shown := 0
+	serviceNames := make([]string, 0, len(r.Services))
+	for _, name := range overviewServices(r.Layers) {
+		if o.Service != "" && name != o.Service {
+			continue
+		}
+		for _, l := range r.Layers {
+			if l.Service != name {
+				continue
+			}
+			if len(filterKeyEntries(l.Entries, o.FilterVar)) == 0 {
+				continue
+			}
+			serviceNames = append(serviceNames, name)
+			shown++
+			break
+		}
+	}
+	if shown == 0 {
+		if o.FilterVar != "" {
+			_, _ = fmt.Fprintf(w, "\n  %s\n", s.Hint(fmt.Sprintf("%s: not declared in any service env_file: or inline environment:", Sanitize(o.FilterVar))))
+		}
 		return
 	}
 	_, _ = fmt.Fprintln(w, "\n"+s.Header("Runtime-only — service env_file: (NOT interpolated)"))
-	for _, name := range services {
+	for _, name := range serviceNames {
 		_, _ = fmt.Fprintf(w, "  %s:\n", s.Service(name))
 		svcAcc := map[string]string{}
 		for _, l := range r.Layers {
 			if l.Service != name {
+				continue
+			}
+			entries := filterKeyEntries(l.Entries, o.FilterVar)
+			if len(entries) == 0 {
 				continue
 			}
 			label := l.File
@@ -328,9 +695,9 @@ func renderOverview(w io.Writer, r Report, o HumanOpts, s Styler) {
 				label = "inline environment:"
 			}
 			_, _ = fmt.Fprintf(w, "    %s\n", s.Path(label))
-			renderLayerEntriesIndented(w, l.Entries, svcAcc, s)
+			renderLayerEntriesIndented(w, entries, svcAcc, s)
 		}
-		renderServiceGaps(w, r, name, s)
+		renderServiceGaps(w, r, name, s, o.FilterVar)
 	}
 }
 
@@ -397,13 +764,16 @@ func overviewServices(layers []OverviewLayer) []string {
 // renderServiceGaps prints a `⚠ gap:` line per var that is a v3 gap (referenced as
 // ${VAR} but env_file-only) AND referenced in THIS service — reusing the existing
 // gap detection (Vars[].Gap / Effects), pure presentation.
-func renderServiceGaps(w io.Writer, r Report, service string, s Styler) {
+func renderServiceGaps(w io.Writer, r Report, service string, s Styler, filterVar string) {
 	names := make([]string, 0, len(r.Vars))
 	for name := range r.Vars {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if filterVar != "" && name != filterVar {
+			continue
+		}
 		vt := r.Vars[name]
 		if !vt.Gap {
 			continue
@@ -444,15 +814,29 @@ func stripVarPrefix(name, resolved string) string {
 
 // renderEffective prints each service's effective env. Entries are pre-sorted by
 // the engine (deterministic emit), so we iterate as-is.
-func renderEffective(w io.Writer, r Report, service string, s Styler) {
+func renderEffective(w io.Writer, r Report, service, filterVar string, s Styler) {
+	printed := 0
 	for _, se := range r.Services {
 		if service != "" && se.Service != service {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "service %s:\n", s.Service(se.Service))
+		var matched []EnvEntry
 		for _, e := range se.Entries {
+			if filterVar == "" || e.Key == filterVar {
+				matched = append(matched, e)
+			}
+		}
+		if len(matched) == 0 {
+			continue // the key lives only in other services
+		}
+		_, _ = fmt.Fprintf(w, "service %s:\n", s.Service(se.Service))
+		for _, e := range matched {
 			_, _ = fmt.Fprintf(w, "  %s=%s\t<- %s (%s)\n",
 				s.Key(e.Key), s.Value(e.Value), s.Path(e.Source.File), s.SourceLabel(e.Source.Layer))
 		}
+		printed += len(matched)
+	}
+	if printed == 0 && filterVar != "" {
+		_, _ = fmt.Fprintf(w, "%s: no service exposes this key in its effective env\n", Sanitize(filterVar))
 	}
 }

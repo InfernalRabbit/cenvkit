@@ -111,6 +111,12 @@ func newRootCmd() *cobra.Command {
 				flag = f.Value.String()
 			}
 			styler = style.Resolve(flag, os.Stdout)
+			// COMPOSE_ENV was removed (renamed to CENVKIT_ENV). It is still common in
+			// old wrappers, and silently ignoring it would select the wrong tier.
+			if v := os.Getenv("COMPOSE_ENV"); v != "" {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+					"cenvkit: warning: COMPOSE_ENV=%s is ignored (removed name); use CENVKIT_ENV\n", v)
+			}
 			return nil
 		},
 	}
@@ -471,16 +477,177 @@ func newInitCmd() *cobra.Command {
 	}
 }
 
+// debugViewOrder is the canonical cascade order offered by --show.
+var debugViewOrder = []provenance.View{
+	provenance.ViewList,
+	provenance.ViewFiles,
+	provenance.ViewOverview,
+	provenance.ViewEffective,
+	provenance.ViewTrace,
+}
+
+// parseDebugView maps a --show value onto a View.
+func parseDebugView(name string) (provenance.View, bool) {
+	for _, v := range debugViewOrder {
+		if string(v) == name {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func hasView(views []provenance.View, want provenance.View) bool {
+	for _, v := range views {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// perServiceView reports whether a view renders per-service data, i.e. whether
+// --service can narrow it.
+func perServiceView(v provenance.View) bool {
+	return v == provenance.ViewFiles || v == provenance.ViewOverview ||
+		v == provenance.ViewEffective || v == provenance.ViewTrace
+}
+
+// debugRequest is the validated shape of one env-debug invocation.
+type debugRequest struct {
+	views      []provenance.View
+	varName    string
+	service    string
+	json       bool
+	redact     bool
+	value      bool
+	wantLayers bool
+}
+
+// buildDebugRequest merges --show with the deprecated single-view flags, applies
+// the documented defaults, and rejects impossible combinations with exit 2 (a
+// usage error) instead of silently falling into one of the views.
+func buildDebugRequest(shows []string, varName, service string, jsonOut, redact bool,
+	aliasList, aliasFiles, aliasOverview, aliasEffective, aliasTrace, aliasValue bool) (debugRequest, error) {
+	req := debugRequest{varName: varName, service: service, json: jsonOut, redact: redact, value: aliasValue}
+	seen := map[provenance.View]bool{}
+	add := func(v provenance.View) {
+		if !seen[v] {
+			seen[v] = true
+			req.views = append(req.views, v)
+		}
+	}
+	for _, name := range shows {
+		v, ok := parseDebugView(name)
+		if !ok {
+			return req, &exitError{code: 2, msg: fmt.Sprintf("unknown --show %q (want list|files|overview|effective|trace)", name)}
+		}
+		add(v)
+	}
+	explicit := len(req.views) > 0
+	for _, pair := range []struct {
+		set bool
+		v   provenance.View
+	}{
+		{aliasList, provenance.ViewList},
+		{aliasFiles, provenance.ViewFiles},
+		{aliasOverview, provenance.ViewOverview},
+		{aliasEffective, provenance.ViewEffective},
+		{aliasTrace, provenance.ViewTrace},
+	} {
+		if pair.set {
+			explicit = true
+			add(pair.v)
+		}
+	}
+	if req.value && jsonOut {
+		return req, &exitError{code: 2, msg: "--value cannot be combined with --json (use --json --var KEY)"}
+	}
+	if req.value {
+		if varName == "" {
+			return req, &exitError{code: 2, msg: "--value requires --var"}
+		}
+		if len(req.views) > 0 {
+			return req, &exitError{code: 2, msg: "--value prints a bare value and cannot be combined with other views"}
+		}
+		return req, nil
+	}
+	if hasView(req.views, provenance.ViewTrace) && varName == "" {
+		return req, &exitError{code: 2, msg: "--show trace requires --var"}
+	}
+	// Defaults: only for the human path. JSON without --show keeps the historical
+	// whole-report document (backwards compatible), narrowed by the filters.
+	if !jsonOut && len(req.views) == 0 {
+		switch {
+		case varName != "":
+			add(provenance.ViewTrace)
+		case service != "":
+			add(provenance.ViewEffective)
+		default:
+			add(provenance.ViewList)
+		}
+	}
+	if service != "" {
+		per := false
+		for _, v := range req.views {
+			if perServiceView(v) {
+				per = true
+				break
+			}
+		}
+		if !per && (explicit || !jsonOut) {
+			return req, &exitError{code: 2, msg: fmt.Sprintf("--service %q needs a per-service view (--show files|overview|effective|trace)", service)}
+		}
+	}
+	// Raw layers are only needed by --overview and by the --var filter over file
+	// lists (human or JSON).
+	needsLayersForFiles := varName != "" &&
+		(hasView(req.views, provenance.ViewList) || hasView(req.views, provenance.ViewFiles) || jsonOut)
+	req.wantLayers = hasView(req.views, provenance.ViewOverview) || needsLayersForFiles
+	return req, nil
+}
+
 func newEnvDebugCmd() *cobra.Command {
 	var (
-		mList, mEffective, mFiles, mTrace, mValue, mOverview, jsonOut bool
-		varName, service                                              string
-		envFiles                                                      []string
+		shows    []string
+		varName  string
+		service  string
+		jsonOut  bool
+		redact   bool
+		envFiles []string
+		// Deprecated single-view flags: aliases for --show, scheduled for removal
+		// in 0.9. Each still works and appends its view in canonical order.
+		aliasList, aliasFiles, aliasOverview, aliasEffective, aliasTrace, aliasValue bool
 	)
 	c := &cobra.Command{
 		Use:   "env-debug",
 		Short: "Inspect the resolved env chain with provenance",
+		Long: "Inspect the resolved env chain with provenance.\n\n" +
+			"Views CASCADE: repeat --show and the sections render in the order given\n" +
+			"(no --show => the Layer-1 list). Filters narrow every view with the data:\n" +
+			"--var KEY on list/files/overview/effective/trace/json, --service NAME on the\n" +
+			"per-service views. Impossible combinations exit 2 instead of guessing.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			req, err := buildDebugRequest(shows, varName, service, jsonOut, redact,
+				aliasList, aliasFiles, aliasOverview, aliasEffective, aliasTrace, aliasValue)
+			if err != nil {
+				return err
+			}
+			if !req.json {
+				for _, d := range []struct {
+					used bool
+					name string
+				}{
+					{aliasList, "list"},
+					{aliasFiles, "files"},
+					{aliasOverview, "overview"},
+					{aliasEffective, "effective"},
+					{aliasTrace, "trace"},
+				} {
+					if d.used {
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "cenvkit: warning: --%s is deprecated; use --show %s\n", d.name, d.name)
+					}
+				}
+			}
 			dir, err := resolveProjectDir(cmd)
 			if err != nil {
 				return err
@@ -489,13 +656,6 @@ func newEnvDebugCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// v3 (Layer-2 debug-only): pass ONLY the Layer-1 chain as ProvFiles. The
-			// run's COMPOSE_ENV_FILES is Layer-1-only, so the interpolation env
-			// engine.Provenance builds is Layer-1-only too — a ${VAR} defined only in
-			// a service env_file: resolves to its run fallback (the gap). The engine
-			// still enumerates the active Layer-2 set INTERNALLY (its C-loop, the
-			// gap-detector evidence); we no longer call engine.Resolve here (drops the
-			// redundant load — D1).
 			chainFiles, err := addExtraEnvFiles(dir, cr.Files, envFiles)
 			if err != nil {
 				return err
@@ -506,55 +666,58 @@ func newEnvDebugCmd() *cobra.Command {
 			}
 			rep, err := engine.New().Provenance(cmd.Context(), engine.ProvInput{
 				ProjectDir: dir, Env: withComposeEnv(os.Environ(), cr.ComposeEnv), EnvFiles: pf,
-				WantLayers: mOverview, // only the --overview path builds the raw layer dump (D-A)
+				WantLayers: req.wantLayers,
 			})
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			if jsonOut {
-				// Top precedence (spec §5 rule 0): JSON is NEVER colored. RenderJSON
-				// emits no styling, so the machine output stays ANSI-free regardless
-				// of --color=always.
-				return provenance.RenderJSON(out, rep)
+			if req.json {
+				// JSON is never colored and the filter/section options are honoured
+				// rather than silently dropped.
+				return provenance.RenderJSONOpts(out, rep, provenance.JSONOpts{
+					Service: req.service, Var: req.varName, Views: req.views, Redact: req.redact,
+					DropLayers: !hasView(req.views, provenance.ViewOverview),
+				})
 			}
-			provenance.RenderHuman(out, rep, provenance.HumanOpts{
-				Trace: pick(mTrace, varName), Value: pick(mValue, varName),
-				Effective: mEffective, Service: service, Chain: mList, Files: mFiles,
-				Overview:         mOverview,
+			opts := provenance.HumanOpts{
+				Views: req.views, Service: req.service, FilterVar: req.varName,
+				Redact:           req.redact,
 				ComposeEnv:       cr.ComposeEnv,
 				ComposeEnvSource: cr.ComposeEnvSource,
 				ProjectDir:       dir,
 				Style:            currentStyler(),
-			})
+			}
+			if req.value {
+				opts.Value = req.varName
+			}
+			if hasView(req.views, provenance.ViewTrace) {
+				opts.Trace = req.varName
+			}
+			provenance.RenderHuman(out, rep, opts)
 			return nil
 		},
 	}
-	// --list is this command's default view (the Layer-1 chain-file list). It was
-	// named --chain pre-C4; C4 reclaims the universal string selector `--chain
-	// <name>` (the persistent root flag) for picking a named [name] section, so the
-	// boolean mode was renamed --list to avoid a same-flag string/bool collision.
-	c.Flags().BoolVar(&mList, "list", false, "Layer-1 chain files (default view)")
-	c.Flags().BoolVar(&mEffective, "effective", false, "per-service env with sources")
-	c.Flags().BoolVar(&mFiles, "files", false, "interpolation set (COMPOSE_ENV_FILES) + runtime-only service env_file paths")
-	c.Flags().BoolVar(&mTrace, "trace", false, "trace --var: winner, overridden, effects")
-	c.Flags().BoolVar(&mValue, "value", false, "winning value of --var")
-	c.Flags().BoolVar(&mOverview, "overview", false, "per-file layering overview (raw values, +/~/· markers)")
-	c.Flags().StringVar(&varName, "var", "", "variable for --trace/--value")
-	c.Flags().StringVar(&service, "service", "", "filter --effective to one service")
-	c.Flags().BoolVar(&jsonOut, "json", false, "machine-readable JSON")
+	c.Flags().StringArrayVar(&shows, "show", nil, "view to render, repeatable and cascading: list|files|overview|effective|trace")
+	c.Flags().StringVar(&varName, "var", "", "filter every view by variable KEY (implies --show trace when no view is given)")
+	c.Flags().StringVar(&service, "service", "", "filter per-service views by SERVICE (implies --show effective when no view is given)")
+	c.Flags().BoolVar(&jsonOut, "json", false, "machine-readable JSON; --show selects the sections, filters apply")
+	c.Flags().BoolVar(&redact, "redact", false, "mask values as <redacted>, keeping keys, files and layers")
+	c.Flags().BoolVar(&aliasValue, "value", false, "print the winning value of --var (non-cascading primitive)")
+	c.Flags().BoolVar(&aliasList, "list", false, "Layer-1 chain files (deprecated: --show list)")
+	c.Flags().BoolVar(&aliasFiles, "files", false, "interpolation + runtime-only split (deprecated: --show files)")
+	c.Flags().BoolVar(&aliasOverview, "overview", false, "per-file layering (deprecated: --show overview)")
+	c.Flags().BoolVar(&aliasEffective, "effective", false, "per-service env (deprecated: --show effective)")
+	c.Flags().BoolVar(&aliasTrace, "trace", false, "trace --var (deprecated: --show trace)")
 	c.Flags().StringArrayVar(&envFiles, "env-file", nil,
 		"extra env file layered after the chain (repeatable; mirrors docker compose --env-file)")
-	return c
-}
-
-// pick returns name when enabled, else "" — maps a bool mode + --var into the
-// string fields provenance.HumanOpts uses for --trace / --value.
-func pick(enabled bool, name string) string {
-	if enabled {
-		return name
+	// Hidden, not cobra-deprecated: cobra prints its deprecation note to stderr on
+	// every use, which corrupts machine-readable output for callers that capture
+	// both streams. The warning below is emitted only on the human path.
+	for _, name := range []string{"list", "files", "overview", "effective", "trace"} {
+		_ = c.Flags().MarkHidden(name)
 	}
-	return ""
+	return c
 }
 
 // newGapReportCmd is the daemon-free CI/pre-build lint over the EXISTING gap set
