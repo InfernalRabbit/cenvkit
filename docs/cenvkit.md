@@ -190,6 +190,11 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
 - **`COMPOSE_DEPTH`** is accepted-but-ignored (the `include:` graph makes
   depth-bounded glob discovery obsolete). **No over-discovery** — a compose file
   not in the `include:` graph / `COMPOSE_FILE` is not loaded; `.git` is irrelevant.
+- **`docker compose --env-file` is not modelled.** cenvkit reasons about
+  `COMPOSE_ENV_FILES`, `COMPOSE_FILE` and the project chain; a file passed to
+  docker via `--env-file` is unknown to `env-debug`/`gap-report` (compose-go will
+  warn that those variables are unset). List that file in `.cenvkit.envchain` if
+  the diagnostics must see it; `cenvkit compose` still forwards the flag.
 
 ## Configuration
 
@@ -203,7 +208,9 @@ The same Layer-1 chain that feeds `compose` drives any consumer:
   `--project-dir` at a tree you control.
 - **Named chains** — `--chain <name>` selects a `[name]` section (default = the
   header-less / `[default]` list). Standalone (no inheritance), orthogonal to
-  `CENVKIT_ENV`; an unknown name exits 2 listing the available ones.
+  `CENVKIT_ENV`; an unknown name exits 2 listing the available ones. An empty
+  section yields an empty chain, which disables native `.env` fallback for
+  `compose`/`validate`. Guide: [`agent-notes/named-chains.md`](agent-notes/named-chains.md).
 - An empty selected chain disables native `.env` fallback for `compose`/`validate`;
   it does not inherit excluded files. Explicit Docker `--env-file` still works.
 - `CENVKIT_ENV` — selects the env tier (shell > `.env`'s `CENVKIT_ENV=` > `dev`).

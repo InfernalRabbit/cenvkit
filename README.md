@@ -153,6 +153,50 @@ real, include-aware model and enumerates those paths, but only to power `env-deb
 See `cenvkit env-files` for the chain, and `cenvkit env-debug --files` for the
 runtime-only env_file paths.
 
+### Named chains
+
+One file can hold several chains; `--chain <name>` picks one (sections are
+standalone — no inheritance from the default):
+
+```
+.secrets.env
+.env
+.${D}{HOSTNAME}.env
+
+[ci]
+.env
+
+[prod]
+.secrets.env
+.env
+.prod.env
+```
+
+`cenvkit --chain ci gap-report` lints exactly what CI can see, instead of
+reporting the absence of workstation files. Full semantics and pitfalls:
+[`docs/agent-notes/named-chains.md`](docs/agent-notes/named-chains.md).
+
+### Replacing a compiled-env wrapper
+
+If you already have a `compile-env.sh` that glues `.env` + secrets + a machine
+override into one file and runs `docker compose --env-file …`, cenvkit can take
+over the delivery step without changing your compose files:
+
+```sh
+# before
+bin/compile-env.sh
+docker compose --env-file data/.compiled.env up
+
+# after
+eval "$(cenvkit env --format shell)"   # same merged values, into this shell
+cenvkit compose up                     # sets COMPOSE_ENV_FILES, execs docker compose
+```
+
+Two things to carry over: put the machine override in the chain as
+`.${D}{HOSTNAME}.env`, and if any consumer still passes `--env-file` explicitly,
+list that file in `.cenvkit.envchain` — cenvkit models `COMPOSE_ENV_FILES` and
+`COMPOSE_FILE`, not arbitrary docker CLI flags.
+
 ---
 
 ## Run from root AND from a subproject
@@ -253,7 +297,14 @@ cenvkit/
 - [`docs/cenvkit.md`](docs/cenvkit.md) — the one-page reference (commands +
   behavior contracts at a glance).
 - [`docs/agent-notes/`](docs/agent-notes/) — implementation notes: compose-go
-  facts, env semantics, testing/CI gotchas, known traps.
+  facts, env semantics, testing/CI gotchas, known traps, and
+  [named chains](docs/agent-notes/named-chains.md).
+- [`docs/integrations/gitlab-offline.md`](docs/integrations/gitlab-offline.md) —
+  running the `gap-report` gate on runners without egress: mirror the pinned
+  release, verify sha256, publish to GitLab's Generic Package Registry.
+- [`scripts/ci/`](scripts/ci/) — `cenvkit-install.sh` (pinned install from a
+  mirror or a pre-baked archive), `cenvkit-publish.sh` (mirror a release), and a
+  self-test that CI runs.
 - [`AGENTS.md`](AGENTS.md) — integration guide for AI agents.
 - [`examples/monorepo/`](examples/monorepo/) — runnable, cenvkit-driven
   root-`include:`s-subprojects blueprint.

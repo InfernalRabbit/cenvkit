@@ -24,6 +24,9 @@
   job reports drift against upstream.
 - Recheck `make fmt-check` after the final Go edit. For release-config changes,
   run `goreleaser check` (also a separate CI job).
+- Shipped shell is POSIX `sh` (`cenvkit` launcher, `scripts/ci/*.sh`): keep it
+  `sh -n`-clean and run `sh scripts/ci/cenvkit-install-selftest.sh` when touching
+  the installer (CI does both).
 - Acceptance `TestMain` builds its own temporary CLI; no prebuilt binary needed.
   Fixtures copy `examples/monorepo` and seed dot-env files from `example.*`.
   When changing the counted assertions, update `declaredAssertions` and the

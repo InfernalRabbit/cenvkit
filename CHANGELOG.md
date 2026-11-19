@@ -6,6 +6,45 @@ All notable changes to cenvkit are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-11-19
+
+Integration release: the offline/CI material that was previously handed out as
+one-off snippets now ships with the tool.
+
+### Added
+
+- `scripts/ci/cenvkit-install.sh` — install a **pinned** cenvkit and verify it:
+  `CENVKIT_VERSION` + `CENVKIT_SHA256` + `CENVKIT_MIRROR` (layout
+  `<MIRROR>/<version>/<asset>`), optional `CENVKIT_MIRROR_AUTH` header for private
+  registries, and `CENVKIT_LOCAL_BIN` for air-gapped runners that ship the archive
+  in the image. Fails closed on checksum mismatch.
+- `scripts/ci/cenvkit-publish.sh` — mirror a release into a GitLab Generic Package
+  Registry (works for any store with the same layout): verifies the local
+  `checksums.txt`, uploads every archive plus the manifest, then proves each file
+  is retrievable.
+- `scripts/ci/cenvkit-install-selftest.sh` — offline self-test: builds the CLI,
+  packages a release-shaped archive, serves it over `file://`, and asserts the
+  installer accepts a matching sha256 and rejects a tampered one. Runs in CI.
+- `docs/integrations/gitlab-offline.md` — the full recipe: mirror layout, publish
+  and gate jobs, runner-architecture pins, the 401/403/404 matrix for the first
+  publish, and secrets hygiene when materialising a `.secrets.env` from a CI
+  `File` variable.
+- `docs/agent-notes/named-chains.md` — named chains in depth: standalone sections,
+  `last-wins`, empty-section behaviour (`COMPOSE_DISABLE_ENV_FILE=1`), tokens
+  inside sections, and the precedence trap where a committed template can
+  override a secret.
+
+### Changed
+
+- CI gained a shell gate: `sh -n` over the launcher and `scripts/ci/*`, plus the
+  installer self-test on every push.
+- README documents named chains and how to replace a compiled-env wrapper
+  (`compile-env.sh` + `docker compose --env-file`) with
+  `eval "$(cenvkit env --format shell)"` + `cenvkit compose`.
+- `docs/cenvkit.md` states an explicit contract: `docker compose --env-file` is not
+  modelled by `env-debug`/`gap-report`; list that file in `.cenvkit.envchain` if the
+  diagnostics must see it.
+
 ## [0.6.1] — 2026-11-19
 
 Hardening and release-engineering pass; no behavior change beyond the exit codes

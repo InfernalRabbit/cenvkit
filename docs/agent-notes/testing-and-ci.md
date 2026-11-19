@@ -95,12 +95,19 @@ Go переиспользует кэш результатов `go test`, ког�
 
 | Job | Что делает |
 |---|---|
-| `lint` | `go vet`, gate по `gofmt -l`, seam-проверка compose-go, `golangci-lint` через `go install` |
+| `lint` | `go vet`, gate по `gofmt -l`, seam-проверка compose-go, `golangci-lint` через `go install`, `sh -n` по `cenvkit`+`scripts/ci/*.sh` и офлайн-селфтест инсталлера |
 | `goreleaser-check` | `goreleaser check` |
 | `release-snapshot` | `goreleaser release --snapshot --clean --skip=publish` — все 6 таргетов + архивы собираются ДО тега |
 | `test` (ubuntu + macos) | `go build`, `go test ./... -count=1` с `SMOKE_SKIP_DOCKER=1` (== no-docker acceptance: `./...` включает `./test`) |
 | `acceptance-docker` | ставит **пиннутый** Compose (`COMPOSE_VERSION` + sha256 из env-блока), сверяет `version --short`, `go test ./test/... -v -count=1` |
 | `compose-latest` | необязательный (`continue-on-error`) дрейф-детектор: тот же acceptance против upstream latest |
+
+Скрипты `scripts/ci/`: `cenvkit-install.sh` (пин версии+sha256, `CENVKIT_MIRROR` /
+`CENVKIT_MIRROR_AUTH`, `CENVKIT_LOCAL_BIN` для air-gap), `cenvkit-publish.sh`
+(Generic Package Registry: сверка `checksums.txt` → upload → проверка скачивания).
+`cenvkit-install-selftest.sh` собирает релизообразный архив, отдаёт его через
+`file://`-зеркало и проверяет, что верный sha256 ставится, а неверный — нет. Гоняется
+в CI на каждый push, сети не требует.
 
 Seam-проверка: `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...` БЕЗ
 `-deps` (с `-deps` в левой колонке оказываются подпакеты самого compose-go →

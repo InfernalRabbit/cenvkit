@@ -64,6 +64,17 @@ jobs:
           fi
           echo "seam OK"
 
+      - name: shell scripts (sh -n + installer self-test)
+        # The shipped shell is POSIX sh: the tracked launcher plus scripts/ci/*.
+        # The self-test builds a release-shaped archive, serves it over a
+        # file:// mirror and asserts the pinned installer accepts a matching
+        # sha256 and refuses a tampered one — no network involved.
+        run: |
+          for f in cenvkit scripts/ci/*.sh; do
+            sh -n "$f"
+          done
+          sh scripts/ci/cenvkit-install-selftest.sh
+
       - name: golangci-lint
         # Install via `go install` so the linter is built with THIS job's Go
         # (1.26). The golangci-lint-action ships a prebuilt binary built with an
