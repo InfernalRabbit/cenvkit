@@ -1,3 +1,5 @@
+**English** · [Русский](docs/ru/AGENTS.md)
+
 # AGENTS.md — cenvkit
 
 ## Development and verification

@@ -47,10 +47,10 @@ examples/monorepo/
 | Layer-1 chain (`COMPOSE_ENV_FILES`, `.cenvkit.envchain`) | корневой `.env`, `.dev.env`, `.secrets.env`, … | **да** |
 | Сервисный `env_file:` (`web/.web.env`, `api/.api.env`, …) | runtime-окружение каждого контейнера | **нет** |
 
-`WEB_PORT=18080` живёт только в `web/.web.env` — сервисном `env_file:`. На этапе
-интерполяции compose `${WEB_PORT}` нет в Layer-1 chain, поэтому он откатывается к
-`:-0`. Контейнер всё равно получает `WEB_PORT=18080` в runtime (через сервисный
-`env_file:`). `cenvkit env-debug` показывает именно это.
+`WEB_PORT=18080` живёт только в `web/.web.env` — сервисном `env_file:`. При
+интерполяции на этапе compose `${WEB_PORT}` отсутствует в Layer-1 chain, поэтому
+он откатывается к `:-0`. Контейнер всё равно получает `WEB_PORT=18080` в runtime
+(через сервисный `env_file:`). `cenvkit env-debug` показывает именно это.
 
 ---
 
@@ -94,7 +94,7 @@ cenvkit validate
 ```
 
 Нативный compose из корня даёт при fallback точно такой же результат — gap — это
-нативное поведение Docker, а не что-то, что добавляет cenvkit:
+нативное поведение Docker, а не то, что добавляет cenvkit:
 
 ```sh
 docker compose config | grep -E 'WEB_PORT|API_PORT|published'
@@ -147,10 +147,10 @@ cenvkit env-debug --effective --service web
 ```
 
 Вывод `--effective` показывает **правду о контейнере**: `WEB_PORT=0` приходит из
-inline `environment: WEB_PORT: "${WEB_PORT:-0}"`. Этот inline интерполируется
-против Layer-1 chain, в которой `WEB_PORT` нет, поэтому побеждает fallback
-`:-0`. Это переопределяет `18080` из `web/.web.env` (inline `environment:` всегда
-побеждает `env_file:`).
+inline `environment: WEB_PORT: "${WEB_PORT:-0}"`; это значение интерполируется
+против Layer-1 chain, где `WEB_PORT` нет, поэтому побеждает fallback `:-0`. Это
+переопределяет `18080` из `web/.web.env` (inline `environment:` всегда побеждает
+`env_file:`).
 
 **Чтобы `${WEB_PORT}` интерполировался** (например, чтобы публиковать настоящий
 порт): добавьте `WEB_PORT=18080` в Layer-1 chain (корневой `.env` или `web/.env`).
