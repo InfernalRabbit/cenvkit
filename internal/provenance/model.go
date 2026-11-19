@@ -85,12 +85,24 @@ type ServiceEnv struct {
 // Services (service `env_file:` paths), NOT from Files. `--chain` (and the bare
 // default view) renders ChainFiles — secrets stay last WITHIN the Layer-1 chain
 // (acceptance TestScenario12 [12.4]).
+// Ref is one interpolation edge: the raw value of (FromFile, FromKey) references
+// ToVar. FromService is set for a service env_file: layer. These edges are the
+// graph the --show deps view walks.
+type Ref struct {
+	FromFile    string `json:"from_file"`
+	FromKey     string `json:"from_key"`
+	FromService string `json:"from_service,omitempty"`
+	FromLayer   string `json:"from_layer"` // layer1 | env_file | environment
+	ToVar       string `json:"to_var"`
+}
+
 type Report struct {
 	Files      []string            `json:"files"`              // new COMPOSE_ENV_FILES order (Layer-1 ONLY; == ChainFiles)
 	ChainFiles []string            `json:"chain_files"`        // Layer-1 chain order (kept for the --chain path; D2)
 	Vars       map[string]VarTrace `json:"vars"`               // A + B-lite + gap (InChain/RuntimeDefs/Gap)
 	Services   []ServiceEnv        `json:"services,omitempty"` // C (also the runtime-only group for --files)
 	Layers     []OverviewLayer     `json:"layers,omitempty"`   // ordered raw per-file layers for --overview (populated only when WantLayers)
+	Refs       []Ref               `json:"refs,omitempty"`     // interpolation edges for --show deps (populated only when WantDeps)
 }
 
 // OverviewEntry is one KEY=VALUE line of a file, captured LITERALLY in declaration
